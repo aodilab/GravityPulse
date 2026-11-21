@@ -10,34 +10,17 @@ import time
 import tkinter as tk
 
 from config.settings import (
-    APP_USER_MODEL_ID,
-    LOCAL_TZ,
-    BG_PAGE,
-    DEFAULT_ANTIGRAVITY_DIR,
-    ICON_PATH,
-    IPC_POLL_MS,
-    MIN_VISIBLE_DATE,
-    MONITOR_MS,
-    REFRESH_MS,
-    SHOW_EVENT_NAME,
-    SINGLETON_MUTEX_NAME,
+    APP_USER_MODEL_ID, BG_PAGE, DEFAULT_ANTIGRAVITY_DIR, ICON_PATH, IPC_POLL_MS,
+    LOCAL_TZ, MIN_VISIBLE_DATE, MONITOR_MS, REFRESH_MS, SHOW_EVENT_NAME, SINGLETON_MUTEX_NAME,
 )
 from src.core import (
-    QuotaConfig,
-    SwitchAlertTracker,
-    local_day_bounds,
-    local_week_bounds,
-    collect_dialog_contexts,
-    compute_day_report,
-    compute_telemetry_fingerprint,
-    compute_week_report,
-    load_quota_config,
-    report_to_dict,
-    serialize_dialogs,
-    sync_telemetry_ledger,
-    week_report_to_dict,
+    QuotaConfig, SwitchAlertTracker, collect_dialog_contexts, compute_day_report,
+    compute_telemetry_fingerprint, compute_week_report, load_quota_config,
+    local_day_bounds, local_week_bounds, report_to_dict, serialize_dialogs,
+    sync_telemetry_ledger, week_report_to_dict,
 )
 from src.ui.hero_view import HeroViewMixin
+from src.ui.i18n import load_ui_language, localize_toast, normalize_lang, tr
 from src.ui.layout import LayoutMixin
 from src.ui.live_sync import LiveSyncMixin
 from src.ui.modals import ModalMixin
@@ -60,11 +43,12 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
     """Native desktop GravityPulse dashboard with tray residency and zero-jump auto-refresh."""
 
     def __init__(
-        self, root: tk.Tk, show_event_handle: int = 0, start_hidden: bool = False, mutex_handle: int = 0,
+        self, root: tk.Tk, show_event_handle: int = 0, start_hidden: bool = False, mutex_handle: int = 0, language: str | None = None,
     ) -> None:
         self.root = root
         self._show_event_handle = show_event_handle
         self._mutex_handle = mutex_handle
+        self._lang: str = normalize_lang(language) or load_ui_language()
         self._tray_cmds: "queue.SimpleQueue[str]" = queue.SimpleQueue()
         self.scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
 
@@ -143,9 +127,8 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._center_window()
 
         self._tray = SystemTrayIcon(
-            icon_path=ICON_PATH,
-            tooltip="GravityPulse · Antigravity 2.0 常驻监控 (点击打开)",
-            cmd_queue=self._tray_cmds,
+            icon_path=ICON_PATH, tooltip=tr("tray_tip", self._lang),
+            cmd_queue=self._tray_cmds, menu_state_fn=self._get_tray_menu_state,
         )
         self._tray.start()
 
@@ -161,7 +144,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._start_live_loops()
 
     def _on_mode_click(self, event: tk.Event) -> None:
-        cw = self.px(94)
+        cw = self.px(102)
         target_mode = "day" if event.x < cw // 2 else "week"
         if target_mode == self.view_mode:
             return
@@ -383,7 +366,8 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
     def _process_switch_notifications(self, dialogs: list[dict]) -> None:
         pending_alert = self._alert_tracker.process(dialogs, notify_enabled=self._quota_cfg.notify_switch)
         if pending_alert is not None:
-            self._show_switch_toast(pending_alert[0], pending_alert[1])
+            head, detail = localize_toast(pending_alert[0], pending_alert[1], self._lang)
+            self._show_switch_toast(head, detail)
 
     def show_window(self) -> None:
         """Restore resident window from system tray with smooth spinner + fade transition."""
@@ -432,6 +416,8 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             elif cmd == "quit":
                 self._quit_completely()
                 return
+            elif cmd in ("toggle_startup", "create_shortcut", "toggle_lang"):
+                self._handle_tray_action(cmd)
 
         self._schedule_ipc_poll()
 

@@ -124,7 +124,7 @@ class TestUiAndDaemon(unittest.TestCase):
                 mock.patch.object(SystemTrayIcon, "stop"),
                 mock.patch.object(GravityPulseApp, "refresh"),
             ):
-                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True)
+                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="zh")
                 ui.day_tab = "iv"
                 base_payload = {
                     "mode": "day",
@@ -365,7 +365,7 @@ class TestUiAndDaemon(unittest.TestCase):
                 mock.patch.object(SystemTrayIcon, "stop"),
                 mock.patch.object(GravityPulseApp, "refresh"),
             ):
-                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True)
+                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="zh")
                 ui.view_mode = "week"
                 ui.week_tab = "days"
                 payload = {
@@ -480,7 +480,7 @@ class TestUiAndDaemon(unittest.TestCase):
                 mock.patch.object(SystemTrayIcon, "stop"),
                 mock.patch.object(GravityPulseApp, "refresh"),
             ):
-                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True)
+                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="zh")
                 ui.day_tab = "conv"
                 payload = {
                     "mode": "day",

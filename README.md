@@ -7,11 +7,11 @@ A lightweight, local-only Windows desktop monitor for **Antigravity 2.0**. It tr
 > **Disclaimer**: GravityPulse is an unofficial, read-only community tool. It reads local telemetry files under `~/.gemini/antigravity`, requires no API keys, intercepts no network traffic, and uploads nothing. Because Antigravity's internal local storage schema may change in future updates, adjustments may occasionally be needed.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="GravityPulse Dashboard" width="840" />
+  <img src="docs/screenshots/dashboard_en.png" alt="GravityPulse Dashboard (English)" width="840" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/toast.png" alt="Non-activating silent switch toast" width="380" />
+  <img src="docs/screenshots/toast_en.png" alt="Non-activating silent switch toast (English)" width="380" />
 </p>
 
 ---
@@ -27,6 +27,7 @@ When working heavily with Antigravity 2.0, three questions come up constantly: h
 - **Accurate Active Work Time**: Uses explicit user messages to define session bounds (30-minute idle bridge, extended to 60 minutes while an agent task is actively running, with zero unattended tail after your last prompt), automatically merging subagents and Git worktrees into parent projects.
 - **Subagent-Aware & Non-Intrusive Alerts**: Detects running subagents and non-daemon background tasks to avoid false cold-cache warnings. Switch notifications appear as silent, non-activating bottom-right cards (`WS_EX_NOACTIVATE`) that never steal focus or play system sounds.
 - **Local Incremental Ledger & Tray Residency**: Keeps a local ledger under `data/telemetry_ledger.db` so deleting conversations in Antigravity does not erase historical work time or quota records. Runs quietly in the Windows system tray and auto-starts alongside `Antigravity.exe`.
+- **Bilingual UI (English / 简体中文)**: Automatically matches your Windows UI language on first launch, with instant switching from the top bar (`EN` / `中`) or tray menu.
 
 ---
 
@@ -42,8 +43,8 @@ When working heavily with Antigravity 2.0, three questions come up constantly: h
 ### Option 1: Portable Windows Release (No Python Required)
 
 1. Download `GravityPulse-win64.zip` from the [Releases](../../releases) page.
-2. Extract it to a folder of your choice and run `GravityPulse.exe`.
-3. Optional: run `GravityPulse.exe --setup` in a terminal to create a Desktop shortcut and auto-start watcher alongside `Antigravity.exe`.
+2. Extract it to a folder of your choice and double-click `GravityPulse.exe` (because the portable binary is unsigned, Windows SmartScreen may show a prompt on first launch — click **More info → Run anyway**).
+3. Right-click the GravityPulse tray icon to toggle **Auto-start with Antigravity**, **Create Desktop Shortcut**, or switch language — no terminal required.
 
 ### Option 2: Run from Source
 

@@ -20,6 +20,7 @@ DEFAULT_GAP_LIMIT = timedelta(minutes=30)
 ACTIVE_TASK_GAP_LIMIT = timedelta(minutes=60)
 DEFAULT_ANTIGRAVITY_DIR = Path.home() / ".gemini" / "antigravity"
 DEFAULT_QUOTA_CONFIG_PATH = DATA_DIR / "quota_config.json"
+DEFAULT_UI_PREFS_PATH = DATA_DIR / "ui_prefs.json"
 DEFAULT_LEDGER_PATH = DATA_DIR / "telemetry_ledger.db"
 RUNNING_STATUS = "CASCADE_RUN_STATUS_RUNNING"
 

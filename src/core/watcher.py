@@ -116,6 +116,51 @@ def launch_resident_app() -> None:
         pass
 
 
+def is_startup_installed() -> bool:
+    """Return True if `GravityPulseWatcher` is currently registered under HKCU Run."""
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_READ) as key:
+            val, _ = winreg.QueryValueEx(key, RUN_REG_VALUE_NAME)
+            return bool(str(val).strip())
+    except OSError:
+        return False
+
+
+def is_watcher_running() -> bool:
+    """Return True if a companion watcher instance already holds `WATCHER_MUTEX_NAME`."""
+    try:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.OpenMutexW.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+        h = k32.OpenMutexW(_SYNCHRONIZE, False, WATCHER_MUTEX_NAME)
+        if h:
+            k32.CloseHandle(h)
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def ensure_watcher_running() -> bool:
+    """Start the detached companion watcher if it is not already running."""
+    if is_watcher_running():
+        return False
+    if not IS_FROZEN and not BUILD_ENTRY.exists():
+        return False
+    try:
+        subprocess.Popen(
+            resolve_launch_command("--watch"),
+            cwd=str(RUNTIME_ROOT),
+            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
+            close_fds=True,
+        )
+        return True
+    except OSError:
+        return False
+
+
 def install_startup_registry() -> str:
     """Register companion watcher under HKCU Run so Antigravity launches auto-start GravityPulse."""
     cmd = resolve_startup_command()

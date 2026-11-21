@@ -17,18 +17,31 @@ from config.settings import (
 )
 
 
-_MODEL_QUOTA_LABELS: tuple[tuple[str, str], ...] = (
-    ("carbon", "Carbon"),
-    ("neon", "Neon"),
-    ("hydrogen", "Hydrogen"),
-    ("other", "其他"),
+from src.ui.i18n import (
+    localize_advice_reason,
+    localize_advice_text,
+    localize_cache_idle,
+    localize_cache_status,
+    localize_duration,
+    localize_model_label,
+    localize_weekday,
+    tr,
 )
 
 
-def format_ranked_flat_model_parts(item: dict) -> list[str]:
+def _model_quota_labels(lang: str) -> tuple[tuple[str, str], ...]:
+    return (
+        ("carbon", "Carbon"),
+        ("neon", "Neon"),
+        ("hydrogen", "Hydrogen"),
+        ("other", tr("other_model", lang)),
+    )
+
+
+def format_ranked_flat_model_parts(item: dict, lang: str = "zh") -> list[str]:
     """Return per-model weekly-quota labels ordered from highest to lowest consumption."""
     entries: list[tuple[float, int, str]] = []
-    for idx, (m_key, m_label) in enumerate(_MODEL_QUOTA_LABELS):
+    for idx, (m_key, m_label) in enumerate(_model_quota_labels(lang)):
         m_pct = float(item.get(f"{m_key}_weekly_pct", 0.0))
         if m_pct > 0.0:
             entries.append((m_pct, idx, m_label))
@@ -36,10 +49,10 @@ def format_ranked_flat_model_parts(item: dict) -> list[str]:
     return [f"{m_label} {m_pct:.1f}%" for m_pct, _idx, m_label in entries]
 
 
-def format_ranked_project_model_parts(project: dict) -> list[str]:
+def format_ranked_project_model_parts(project: dict, lang: str = "zh") -> list[str]:
     """Return project per-model weekly-quota labels ordered from highest to lowest consumption."""
     entries: list[tuple[float, float, int, int, str]] = []
-    for idx, (m_key, m_label) in enumerate(_MODEL_QUOTA_LABELS):
+    for idx, (m_key, m_label) in enumerate(_model_quota_labels(lang)):
         md = project.get(m_key, {})
         tokens = int(md.get("tokens", 0))
         pct = float(md.get("weekly_pct", 0.0))
@@ -67,14 +80,14 @@ class TableViewsMixin:
         x_dur = w - self.px(6)
 
         if draw_head:
-            self.head_canvas.create_text(self.px(6), hy, anchor="w", text="项目", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_st, hy, anchor="w", text="状态", fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(self.px(6), hy, anchor="w", text=tr("col_project", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_st, hy, anchor="w", text=tr("col_status", self._lang), fill=INK_3, font=(FONT_UI, 9))
             self.head_canvas.create_text(x_quota, hy, anchor="w", text=quota_label, fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_dur, hy, anchor="e", text="累计时长", fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_dur, hy, anchor="e", text=tr("col_duration", self._lang), fill=INK_3, font=(FONT_UI, 9))
 
         self._cfg(self.list_canvas, cursor="arrow")
         if not projects:
-            self.list_canvas.create_text(w // 2, self.px(90), text="暂无有效项目工作记录", fill=INK_3, font=(FONT_UI, 10))
+            self.list_canvas.create_text(w // 2, self.px(90), text=tr("empty_projects", self._lang), fill=INK_3, font=(FONT_UI, 10))
             return 0
 
         row_h = self.px(62)
@@ -94,7 +107,11 @@ class TableViewsMixin:
             )
             name_bbox = self.list_canvas.bbox(name_id)
             sub_x = (name_bbox[2] if name_bbox else self.px(80)) + self.px(8)
-            conv_lbl = f"·  {p['conversation_count']} 对话" if p["conversation_count"] > 0 else "·  模型调用"
+            conv_lbl = (
+                tr("proj_convs", self._lang, n=p["conversation_count"])
+                if p["conversation_count"] > 0
+                else tr("proj_api", self._lang)
+            )
             self.list_canvas.create_text(sub_x, top_y, anchor="w", text=conv_lbl, fill=INK_3, font=(FONT_UI, 9))
 
             by0 = y0 + self.px(41)
@@ -105,7 +122,7 @@ class TableViewsMixin:
 
             dot_col = GREEN_DOT if p["is_running"] else INK_3
             txt_col = GREEN_TEXT if p["is_running"] else INK_3
-            txt_str = "运行中" if p["is_running"] else "已停下"
+            txt_str = tr("proj_running", self._lang) if p["is_running"] else tr("proj_idle", self._lang)
             dot_cx = x_st + dr
             self.list_canvas.create_oval(dot_cx - dr, top_y - dr, dot_cx + dr, top_y + dr, fill=dot_col, outline="")
             self.list_canvas.create_text(dot_cx + dr + self.px(6), top_y, anchor="w", text=txt_str, fill=txt_col, font=(FONT_UI, 9))
@@ -114,13 +131,15 @@ class TableViewsMixin:
             self.list_canvas.create_text(x_quota, top_y, anchor="w", text=q_txt, fill=INK, font=(FONT_UI, 10, "bold"))
 
             if calibrated:
-                model_parts = format_ranked_project_model_parts(p)
+                model_parts = format_ranked_project_model_parts(p, lang=self._lang)
                 if model_parts:
                     self.list_canvas.create_text(
                         x_quota, sub_y, anchor="w", text="  ·  ".join(model_parts), fill=INK_3, font=(FONT_UI, 8),
                     )
 
-            self.list_canvas.create_text(x_dur, top_y, anchor="e", text=p["duration"], fill=INK, font=(FONT_UI, 10, "bold"))
+            self.list_canvas.create_text(
+                x_dur, top_y, anchor="e", text=localize_duration(p["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
+            )
 
             if idx < len(projects) - 1:
                 self.list_canvas.create_line(self.px(4), y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
@@ -138,15 +157,15 @@ class TableViewsMixin:
         x_adv_center = (px0 + px1) // 2
 
         if draw_head:
-            self.head_canvas.create_text(self.px(6), hy, anchor="w", text="项目 · 对话", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_hit, hy, anchor="w", text="缓存命中率", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_cache, hy, anchor="w", text="动态缓存", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_ctx, hy, anchor="w", text="上下文 / 安全线", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_adv_center, hy, anchor="center", text="换窗建议", fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(self.px(6), hy, anchor="w", text=tr("col_dialog", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_hit, hy, anchor="w", text=tr("col_cache_hit", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_cache, hy, anchor="w", text=tr("col_kv_cache", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_ctx, hy, anchor="w", text=tr("col_ctx_limit", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_adv_center, hy, anchor="center", text=tr("col_advice", self._lang), fill=INK_3, font=(FONT_UI, 9))
 
         self._cfg(self.list_canvas, cursor="arrow")
         if not dialogs:
-            self.list_canvas.create_text(w // 2, self.px(90), text="当前暂无未归档的活跃对话", fill=INK_3, font=(FONT_UI, 10))
+            self.list_canvas.create_text(w // 2, self.px(90), text=tr("empty_dialogs", self._lang), fill=INK_3, font=(FONT_UI, 10))
             return 0
 
         row_h = self.px(56)
@@ -194,8 +213,8 @@ class TableViewsMixin:
                         hi = mid - 1
                 self.list_canvas.itemconfigure(title_id, text=fit)
 
-            m_lbl = d.get("model_label", "Carbon")
-            sub_line = f"{m_lbl}  ·  入 {d['input_fmt']}  ·  缓 {d['cache_fmt']}  ·  出 {d['output_fmt']}"
+            m_lbl = localize_model_label(d.get("model_label", "Carbon"), self._lang)
+            sub_line = tr("sub_tokens", self._lang, model=m_lbl, inp=d["input_fmt"], cache=d["cache_fmt"], out=d["output_fmt"])
             self.list_canvas.create_text(self.px(6), sub_y, anchor="w", text=sub_line, fill=INK_3, font=(FONT_UI, 8))
 
             ctx_tok = int(d.get("context_tokens", 0))
@@ -203,7 +222,7 @@ class TableViewsMixin:
             cum_pct = float(d.get("cum_cache_hit_pct", 0.0))
             if ctx_tok == 0:
                 self.list_canvas.create_text(x_hit, top_y, anchor="w", text="-", fill=INK_3, font=(FONT_UI, 10))
-                self.list_canvas.create_text(x_hit, sub_y, anchor="w", text="等待首步", fill=INK_3, font=(FONT_UI, 8))
+                self.list_canvas.create_text(x_hit, sub_y, anchor="w", text=tr("waiting_first_step", self._lang), fill=INK_3, font=(FONT_UI, 8))
             else:
                 if cum_pct >= 80.0:
                     cum_fg = GREEN_TEXT
@@ -213,7 +232,7 @@ class TableViewsMixin:
                     cum_fg = "#c9342b"
                 step_fg = "#c9342b" if (ctx_tok >= 4096 and hit_pct < 20.0) else INK_3
                 self.list_canvas.create_text(x_hit, top_y, anchor="w", text=f"{cum_pct:.1f}%", fill=cum_fg, font=(FONT_UI, 10))
-                self.list_canvas.create_text(x_hit, sub_y, anchor="w", text=f"最新步 {hit_pct:.1f}%", fill=step_fg, font=(FONT_UI, 8))
+                self.list_canvas.create_text(x_hit, sub_y, anchor="w", text=tr("latest_step", self._lang, pct=hit_pct), fill=step_fg, font=(FONT_UI, 8))
 
             c_state = d.get("cache_state", "expired")
             if c_state == "expired":
@@ -223,8 +242,14 @@ class TableViewsMixin:
             ca_dot_cx = x_cache + dr
             ca_txt_x = ca_dot_cx + dr + self.px(6)
             self.list_canvas.create_oval(ca_dot_cx - dr, top_y - dr, ca_dot_cx + dr, top_y + dr, fill=c_dot, outline="")
-            self.list_canvas.create_text(ca_txt_x, top_y, anchor="w", text=d.get("cache_status_text", "-"), fill=c_fg, font=(FONT_UI, 9))
-            self.list_canvas.create_text(ca_txt_x, sub_y, anchor="w", text=d.get("cache_idle_text", ""), fill=INK_3, font=(FONT_UI, 8))
+            self.list_canvas.create_text(
+                ca_txt_x, top_y, anchor="w",
+                text=localize_cache_status(d.get("cache_status_text", "-"), self._lang), fill=c_fg, font=(FONT_UI, 9),
+            )
+            self.list_canvas.create_text(
+                ca_txt_x, sub_y, anchor="w",
+                text=localize_cache_idle(d.get("cache_idle_text", ""), self._lang), fill=INK_3, font=(FONT_UI, 8),
+            )
 
             fg_adv, bg_adv = advice_styles.get(d["advice_key"], (INK_2, BG_PAGE))
             ctx_val_id = self.list_canvas.create_text(
@@ -237,7 +262,7 @@ class TableViewsMixin:
             safe_pct = d.get("safe_pct", d.get("compact_pct", 0))
             self.list_canvas.create_text(ctx_sub_x, top_y, anchor="w", text=f"/ {safe_fmt} ({safe_pct}%)", fill=INK_3, font=(FONT_UI, 9))
 
-            reason_txt = d.get("advice_reason") or d.get("compaction_text", "未触发压缩")
+            reason_txt = localize_advice_reason(d.get("advice_reason") or d.get("compaction_text", "未触发压缩"), self._lang)
             if d["advice_key"] == "switch":
                 reason_fg = "#c9342b"
             elif d["advice_key"] == "watch":
@@ -249,7 +274,9 @@ class TableViewsMixin:
             py0 = top_y - pill_h // 2
             py1 = top_y + pill_h // 2
             self._draw_rounded_rect_on_canvas(self.list_canvas, px0, py0, px1, py1, self.px(11), bg_adv)
-            self.list_canvas.create_text(x_adv_center, top_y, text=d["advice_text"], fill=fg_adv, font=(FONT_UI, 8))
+            self.list_canvas.create_text(
+                x_adv_center, top_y, text=localize_advice_text(d["advice_text"], self._lang), fill=fg_adv, font=(FONT_UI, 8),
+            )
 
             if idx < len(dialogs) - 1:
                 self.list_canvas.create_line(self.px(4), y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
@@ -278,7 +305,7 @@ class TableViewsMixin:
             fill=INK if is_emph else INK_3,
             font=(FONT_UI, 10, "bold" if is_emph else "normal"),
         )
-        parts = format_ranked_flat_model_parts(item)
+        parts = format_ranked_flat_model_parts(item, lang=self._lang)
         if parts:
             self.list_canvas.create_text(
                 x_quota, sub_y, anchor="w", text="  ·  ".join(parts), fill=INK_3, font=(FONT_UI, 8),
@@ -291,14 +318,14 @@ class TableViewsMixin:
         x_quota = self.px(380)
         x_dur = w - self.px(6)
         if draw_head:
-            self.head_canvas.create_text(self.px(6), hy, anchor="w", text="序号", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_time, hy, anchor="w", text="本地时间区间", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_quota, hy, anchor="w", text="模型耗周额度", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_dur, hy, anchor="e", text="持续时长", fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(self.px(6), hy, anchor="w", text=tr("col_slot_idx", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_time, hy, anchor="w", text=tr("col_time_range", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_quota, hy, anchor="w", text=tr("col_interval_quota", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_dur, hy, anchor="e", text=tr("col_interval_dur", self._lang), fill=INK_3, font=(FONT_UI, 9))
 
         self._cfg(self.list_canvas, cursor="arrow")
         if not intervals:
-            self.list_canvas.create_text(w // 2, self.px(90), text="当日暂无有效工作时段", fill=INK_3, font=(FONT_UI, 10))
+            self.list_canvas.create_text(w // 2, self.px(90), text=tr("empty_intervals", self._lang), fill=INK_3, font=(FONT_UI, 10))
             return 0
 
         row_h = self.px(56)
@@ -308,10 +335,12 @@ class TableViewsMixin:
             top_y = y0 + self.px(19)
             sub_y = y0 + self.px(39)
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
-            self.list_canvas.create_text(self.px(6), top_y, anchor="w", text=f"时段 {iv['index']:02d}", fill=INK_3, font=(FONT_UI, 9))
+            self.list_canvas.create_text(self.px(6), top_y, anchor="w", text=tr("slot_label", self._lang, idx=iv["index"]), fill=INK_3, font=(FONT_UI, 9))
             self.list_canvas.create_text(x_time, top_y, anchor="w", text=f"{iv['start']} – {iv['end']}", fill=INK, font=(FONT_UI, 10, "bold"))
             self._draw_quota_cell(x_quota, top_y, sub_y, iv, calibrated)
-            self.list_canvas.create_text(x_dur, top_y, anchor="e", text=iv["duration"], fill=INK, font=(FONT_UI, 10, "bold"))
+            self.list_canvas.create_text(
+                x_dur, top_y, anchor="e", text=localize_duration(iv["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
+            )
             if idx < len(intervals) - 1:
                 self.list_canvas.create_line(self.px(4), y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
         return len(intervals) * row_h
@@ -329,10 +358,10 @@ class TableViewsMixin:
         x_dur = w - self.px(6)
 
         if draw_head:
-            self.head_canvas.create_text(self.px(6), hy, anchor="w", text="日期 · 星期", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_cnt, hy, anchor="w", text="工作段 / 对话", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_quota, hy, anchor="w", text="当日耗周额度", fill=INK_3, font=(FONT_UI, 9))
-            self.head_canvas.create_text(x_dur, hy, anchor="e", text="当日工作时长", fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(self.px(6), hy, anchor="w", text=tr("col_date_day", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_cnt, hy, anchor="w", text=tr("col_slots_chats", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_quota, hy, anchor="w", text=tr("col_day_quota", self._lang), fill=INK_3, font=(FONT_UI, 9))
+            self.head_canvas.create_text(x_dur, hy, anchor="e", text=tr("col_day_dur", self._lang), fill=INK_3, font=(FONT_UI, 9))
 
         self._cfg(self.list_canvas, cursor="hand2")
         row_h = self.px(48)
@@ -344,21 +373,26 @@ class TableViewsMixin:
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
             self._row_hitboxes.append((y0, y1, d["date"]))
 
-            date_label = f"{d['date']}  {d['weekday_cn']}" + ("  ·  今天" if d["is_today"] else "")
+            wd = localize_weekday(d["weekday_cn"], self._lang)
+            date_label = f"{d['date']}  {wd}" + (tr("today_tag_wide", self._lang) if d["is_today"] else "")
             lbl_col = INK if not d["is_future"] else INK_3
             self.list_canvas.create_text(
                 self.px(6), top_y, anchor="w", text=date_label, fill=lbl_col,
                 font=(FONT_UI, 10, "bold" if d["is_today"] else "normal"),
             )
 
-            meta_txt = "未开始" if d["is_future"] else f"{d['interval_count']} 段 · {d['conversation_count']} 对话"
+            meta_txt = (
+                tr("day_future", self._lang)
+                if d["is_future"]
+                else tr("day_meta", self._lang, iv=d["interval_count"], conv=d["conversation_count"])
+            )
             self.list_canvas.create_text(x_cnt, top_y, anchor="w", text=meta_txt, fill=INK_3, font=(FONT_UI, 9))
 
             self._draw_quota_cell(
                 x_quota, top_y, sub_y, d, calibrated=calibrated, active=not d["is_future"], dim_zero=True,
             )
 
-            dur_txt = "-" if d["is_future"] else d["total_detail"]
+            dur_txt = "-" if d["is_future"] else localize_duration(d["total_detail"], self._lang)
             dur_col = INK if d["total_seconds"] > 0 else INK_3
             self.list_canvas.create_text(
                 x_dur, top_y, anchor="e", text=dur_txt, fill=dur_col,

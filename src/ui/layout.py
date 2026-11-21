@@ -15,6 +15,7 @@ from config.settings import (
     INK_3,
     LINE_HEX,
 )
+from src.ui.i18n import tr
 from src.ui.primitives import (
     make_brand_badge_image,
     make_chevron_icon,
@@ -90,9 +91,9 @@ class LayoutMixin:
         actions = tk.Frame(nav_inner, bg=BG_PAGE)
         actions.pack(side=tk.RIGHT)
 
-        mw, mh = self.px(88), self.px(34)
+        mw, mh = self.px(96), self.px(34)
         self._imgs["mode_outer"] = make_pill_image(mw, mh, fill=BG_CARD, bg=BG_PAGE, shadow=True)
-        self._imgs["mode_active"] = make_pill_image(self.px(40), self.px(28), fill=INK, bg=BG_CARD)
+        self._imgs["mode_active"] = make_pill_image(self.px(44), self.px(28), fill=INK, bg=BG_CARD)
         self.mode_canvas = tk.Canvas(
             actions, width=mw + self.px(6), height=mh + self.px(6),
             bg=BG_PAGE, bd=0, highlightthickness=0, cursor="hand2",
@@ -117,7 +118,7 @@ class LayoutMixin:
         self.date_canvas.create_image(cw // 2, ch // 2, image=self._imgs["date_pill"])
         self.date_prev_icon = self.date_canvas.create_image(self.px(22), ch // 2, image=self._imgs["chev_l"])
         self.date_text_item = self.date_canvas.create_text(
-            cw // 2, ch // 2, text="加载中...", fill=INK, font=(FONT_UI, 9, "bold"),
+            cw // 2, ch // 2, text=tr("loading", self._lang), fill=INK, font=(FONT_UI, 9, "bold"),
         )
         self.date_next_icon = self.date_canvas.create_image(cw - self.px(22), ch // 2, image=self._imgs["chev_r_dis"])
         self.date_canvas.bind("<Button-1>", self._on_date_pill_click)
@@ -130,11 +131,11 @@ class LayoutMixin:
         )
         self.today_btn_canvas.create_image((tp_w + self.px(6)) // 2, (tp_h + self.px(6)) // 2, image=self._imgs["today_pill"])
         self.today_btn_text = self.today_btn_canvas.create_text(
-            (tp_w + self.px(6)) // 2, (tp_h + self.px(6)) // 2, text="回到今天", fill=INK_2, font=(FONT_UI, 9),
+            (tp_w + self.px(6)) // 2, (tp_h + self.px(6)) // 2, text=tr("back_today", self._lang), fill=INK_2, font=(FONT_UI, 9),
         )
         self.today_btn_canvas.bind("<Button-1>", lambda _e: self._go_current())
 
-        cb_w, cb_h = self.px(66), self.px(34)
+        cb_w, cb_h = self.px(74), self.px(34)
         self._imgs["calib_pill"] = make_pill_image(cb_w, cb_h, fill=BG_CARD, bg=BG_PAGE, shadow=True)
         self.calib_canvas = tk.Canvas(
             actions, width=cb_w + self.px(6), height=cb_h + self.px(6),
@@ -142,12 +143,12 @@ class LayoutMixin:
         )
         self.calib_canvas.pack(side=tk.LEFT, padx=(0, self.px(8)))
         self.calib_canvas.create_image((cb_w + self.px(6)) // 2, (cb_h + self.px(6)) // 2, image=self._imgs["calib_pill"])
-        self.calib_canvas.create_text(
-            (cb_w + self.px(6)) // 2, (cb_h + self.px(6)) // 2, text="校准", fill=INK_2, font=(FONT_UI, 9, "bold"),
+        self.calib_text_item = self.calib_canvas.create_text(
+            (cb_w + self.px(6)) // 2, (cb_h + self.px(6)) // 2, text=tr("calibrate", self._lang), fill=INK_2, font=(FONT_UI, 9, "bold"),
         )
         self.calib_canvas.bind("<Button-1>", lambda _e: self._open_calibration_dialog())
 
-        rb_w, rb_h = self.px(78), self.px(34)
+        rb_w, rb_h = self.px(86), self.px(34)
         self._imgs["refresh_pill"] = make_pill_image(rb_w, rb_h, fill=INK, bg=BG_PAGE)
         self._imgs["refresh_icon"] = make_refresh_icon(self.px(14), "#ffffff", INK)
         self.refresh_canvas = tk.Canvas(
@@ -155,9 +156,23 @@ class LayoutMixin:
         )
         self.refresh_canvas.pack(side=tk.LEFT, padx=(0, self.px(8)))
         self.refresh_canvas.create_image(rb_w // 2, rb_h // 2, image=self._imgs["refresh_pill"])
-        self.refresh_canvas.create_image(self.px(22), rb_h // 2, image=self._imgs["refresh_icon"])
-        self.refresh_canvas.create_text(self.px(49), rb_h // 2, text="刷新", fill="#ffffff", font=(FONT_UI, 9, "bold"))
+        self.refresh_canvas.create_image(self.px(19), rb_h // 2, image=self._imgs["refresh_icon"])
+        self.refresh_text_item = self.refresh_canvas.create_text(
+            self.px(52), rb_h // 2, text=tr("refresh", self._lang), fill="#ffffff", font=(FONT_UI, 9, "bold"),
+        )
         self.refresh_canvas.bind("<Button-1>", lambda _e: self.refresh(force_recompute=True, schedule_next=True))
+
+        lb_w, lb_h = self.px(38), self.px(32)
+        self._imgs["lang_pill"] = make_pill_image(lb_w, lb_h, fill="#e8e8ed", bg=BG_PAGE)
+        self.lang_canvas = tk.Canvas(
+            actions, width=lb_w, height=lb_h, bg=BG_PAGE, bd=0, highlightthickness=0, cursor="hand2",
+        )
+        self.lang_canvas.pack(side=tk.LEFT, padx=(0, self.px(6)))
+        self.lang_canvas.create_image(lb_w // 2, lb_h // 2, image=self._imgs["lang_pill"])
+        self.lang_text_item = self.lang_canvas.create_text(
+            lb_w // 2, lb_h // 2, text=tr("lang_badge", self._lang), fill=INK_2, font=(FONT_UI, 8, "bold"),
+        )
+        self.lang_canvas.bind("<Button-1>", lambda _e: self._toggle_language())
 
         hb_s = self.px(32)
         self._imgs["help_pill"] = make_pill_image(hb_s, hb_s, fill="#e8e8ed", bg=BG_PAGE)
@@ -198,7 +213,7 @@ class LayoutMixin:
         hero_top = tk.Frame(hero_inner, bg=BG_CARD)
         hero_top.pack(fill=tk.X)
 
-        self.hero_eyebrow = tk.Label(hero_top, text="今日累计工作时间", bg=BG_CARD, fg=INK_2, font=(FONT_UI, 9))
+        self.hero_eyebrow = tk.Label(hero_top, text=tr("eyebrow_today", self._lang), bg=BG_CARD, fg=INK_2, font=(FONT_UI, 9))
         self.hero_eyebrow.pack(side=tk.LEFT)
 
         sp_w, sp_h = self.px(138), self.px(26)
@@ -212,13 +227,13 @@ class LayoutMixin:
             self.px(14) - dot_r, sp_h // 2 - dot_r, self.px(14) + dot_r, sp_h // 2 + dot_r, fill=INK_3, outline="",
         )
         self.status_text_item = self.status_canvas.create_text(
-            self.px(24), sp_h // 2, anchor="w", text="当前空闲", fill=INK_2, font=(FONT_UI, 8, "bold"),
+            self.px(24), sp_h // 2, anchor="w", text=tr("status_idle_day", self._lang), fill=INK_2, font=(FONT_UI, 8, "bold"),
         )
 
         metric_row = tk.Frame(hero_inner, bg=BG_CARD)
         metric_row.pack(fill=tk.X, pady=(self.px(4), self.px(2)))
 
-        self.total_human_lbl = tk.Label(metric_row, text="0 分钟", bg=BG_CARD, fg=INK, font=(FONT_UI, 26, "bold"))
+        self.total_human_lbl = tk.Label(metric_row, text="0m" if self._lang == "en" else "0 分钟", bg=BG_CARD, fg=INK, font=(FONT_UI, 26, "bold"))
         self.total_human_lbl.pack(side=tk.LEFT)
 
         self.total_hms_lbl = tk.Label(
@@ -229,13 +244,13 @@ class LayoutMixin:
         quota_box = tk.Frame(metric_row, bg=BG_CARD)
         quota_box.pack(side=tk.RIGHT, anchor="s", pady=(0, self.px(4)))
         self.hero_quota_main = tk.Label(
-            quota_box, text="额度统计准备中", bg=BG_CARD, fg=INK, font=(FONT_UI, 10, "bold"), anchor="e",
+            quota_box, text=tr("quota_preparing", self._lang), bg=BG_CARD, fg=INK, font=(FONT_UI, 10, "bold"), anchor="e",
         )
         self.hero_quota_main.pack(anchor="e")
         self.hero_quota_sub = tk.Label(quota_box, text="", bg=BG_CARD, fg=INK_3, font=(FONT_UI, 8), anchor="e")
         self.hero_quota_sub.pack(anchor="e", pady=(self.px(2), 0))
 
-        self.hero_meta_lbl = tk.Label(hero_inner, text="暂无工作记录", bg=BG_CARD, fg=INK_2, font=(FONT_UI, 9))
+        self.hero_meta_lbl = tk.Label(hero_inner, text=tr("meta_empty", self._lang), bg=BG_CARD, fg=INK_2, font=(FONT_UI, 9))
         self.hero_meta_lbl.pack(anchor="w", pady=(self.px(2), self.px(6)))
 
         self.tl_w = self.content_w - self.px(56)
@@ -273,21 +288,21 @@ class LayoutMixin:
 
         self.tab1_wrap = tk.Frame(tab_left, bg=BG_CARD, cursor="hand2")
         self.tab1_wrap.pack(side=tk.LEFT, padx=(0, self.px(22)))
-        self.tab1_lbl = tk.Label(self.tab1_wrap, text="对话框", bg=BG_CARD, fg=INK, font=(FONT_UI, 10, "bold"), pady=self.px(6))
+        self.tab1_lbl = tk.Label(self.tab1_wrap, text=tr("tab_dialogs", self._lang), bg=BG_CARD, fg=INK, font=(FONT_UI, 10, "bold"), pady=self.px(6))
         self.tab1_lbl.pack()
         self.tab1_line = tk.Frame(self.tab1_wrap, bg=INK, height=self.px(2))
         self.tab1_line.pack(fill=tk.X)
 
         self.tab2_wrap = tk.Frame(tab_left, bg=BG_CARD, cursor="hand2")
         self.tab2_wrap.pack(side=tk.LEFT, padx=(0, self.px(22)))
-        self.tab2_lbl = tk.Label(self.tab2_wrap, text="项目明细", bg=BG_CARD, fg=INK_3, font=(FONT_UI, 10), pady=self.px(6))
+        self.tab2_lbl = tk.Label(self.tab2_wrap, text=tr("tab_projects_day", self._lang), bg=BG_CARD, fg=INK_3, font=(FONT_UI, 10), pady=self.px(6))
         self.tab2_lbl.pack()
         self.tab2_line = tk.Frame(self.tab2_wrap, bg=BG_CARD, height=self.px(2))
         self.tab2_line.pack(fill=tk.X)
 
         self.tab3_wrap = tk.Frame(tab_left, bg=BG_CARD, cursor="hand2")
         self.tab3_wrap.pack(side=tk.LEFT)
-        self.tab3_lbl = tk.Label(self.tab3_wrap, text="工作时段", bg=BG_CARD, fg=INK_3, font=(FONT_UI, 10), pady=self.px(6))
+        self.tab3_lbl = tk.Label(self.tab3_wrap, text=tr("tab_intervals", self._lang), bg=BG_CARD, fg=INK_3, font=(FONT_UI, 10), pady=self.px(6))
         self.tab3_lbl.pack()
         self.tab3_line = tk.Frame(self.tab3_wrap, bg=BG_CARD, height=self.px(2))
         self.tab3_line.pack(fill=tk.X)
@@ -300,7 +315,7 @@ class LayoutMixin:
             w.bind("<Button-1>", lambda _e: self._on_tab_select(2))
 
         self.updated_lbl = tk.Label(
-            tab_bar, text="更新于 --:--:-- · 实时同步中", bg=BG_CARD, fg=INK_3, font=(FONT_UI, 8),
+            tab_bar, text=tr("updated_live", self._lang, hms="--:--:--"), bg=BG_CARD, fg=INK_3, font=(FONT_UI, 8),
         )
         self.updated_lbl.pack(side=tk.RIGHT, pady=self.px(6))
 
@@ -335,23 +350,37 @@ class LayoutMixin:
         )
         self._spinner_canvas.pack()
         self._loading_lbl = tk.Label(
-            loader_center, text="正在同步工作时间与上下文状态…", bg=BG_PAGE, fg=INK_2, font=(FONT_UI, 9),
+            loader_center, text=tr("loading_sync", self._lang), bg=BG_PAGE, fg=INK_2, font=(FONT_UI, 9),
         )
         self._loading_lbl.pack(pady=(self.px(12), 0))
 
+    def _apply_language_static_ui(self) -> None:
+        self._itemcfg(self.calib_canvas, self.calib_text_item, text=tr("calibrate", self._lang))
+        self._itemcfg(self.refresh_canvas, self.refresh_text_item, text=tr("refresh", self._lang))
+        self._itemcfg(self.lang_canvas, self.lang_text_item, text=tr("lang_badge", self._lang))
+        self._cfg(self._loading_lbl, text=tr("loading_sync", self._lang))
+        self._draw_mode_switch()
+        self._last_viz_sig = None
+        self._last_head_sig = None
+        self._last_rows_sig = None
+        if hasattr(self, "_tray") and self._tray is not None:
+            self._tray.set_tooltip(tr("tray_tip", self._lang))
+
     def _draw_mode_switch(self) -> None:
         self.mode_canvas.delete("all")
-        mw, mh = self.px(88), self.px(34)
+        mw, mh = self.px(96), self.px(34)
         cw, ch = mw + self.px(6), mh + self.px(6)
+        day_lbl = tr("mode_day", self._lang)
+        wk_lbl = tr("mode_week", self._lang)
         self.mode_canvas.create_image(cw // 2, ch // 2, image=self._imgs["mode_outer"])
         if self.view_mode == "day":
-            self.mode_canvas.create_image(self.px(26), ch // 2, image=self._imgs["mode_active"])
-            self.mode_canvas.create_text(self.px(26), ch // 2, text="日", fill="#ffffff", font=(FONT_UI, 9, "bold"))
-            self.mode_canvas.create_text(cw - self.px(26), ch // 2, text="周", fill=INK_2, font=(FONT_UI, 9))
+            self.mode_canvas.create_image(self.px(28), ch // 2, image=self._imgs["mode_active"])
+            self.mode_canvas.create_text(self.px(28), ch // 2, text=day_lbl, fill="#ffffff", font=(FONT_UI, 9, "bold"))
+            self.mode_canvas.create_text(cw - self.px(28), ch // 2, text=wk_lbl, fill=INK_2, font=(FONT_UI, 9))
         else:
-            self.mode_canvas.create_image(cw - self.px(26), ch // 2, image=self._imgs["mode_active"])
-            self.mode_canvas.create_text(self.px(26), ch // 2, text="日", fill=INK_2, font=(FONT_UI, 9))
-            self.mode_canvas.create_text(cw - self.px(26), ch // 2, text="周", fill="#ffffff", font=(FONT_UI, 9, "bold"))
+            self.mode_canvas.create_image(cw - self.px(28), ch // 2, image=self._imgs["mode_active"])
+            self.mode_canvas.create_text(self.px(28), ch // 2, text=day_lbl, fill=INK_2, font=(FONT_UI, 9))
+            self.mode_canvas.create_text(cw - self.px(28), ch // 2, text=wk_lbl, fill="#ffffff", font=(FONT_UI, 9, "bold"))
 
     def _draw_spinner_frame(self) -> None:
         self._spinner_canvas.delete("all")

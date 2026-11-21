@@ -4,6 +4,7 @@ from __future__ import annotations
 import ctypes
 from ctypes import wintypes
 from datetime import datetime
+import threading
 import tkinter as tk
 
 from config.settings import (
@@ -27,6 +28,13 @@ from src.core.quota import (
     resolve_current_cycle_anchor_start,
     save_quota_config,
 )
+from src.core.watcher import (
+    ensure_watcher_running,
+    install_startup_registry,
+    is_startup_installed,
+    uninstall_startup_registry,
+)
+from src.ui.i18n import localize_reset_str, save_ui_language, tr
 
 
 def build_calibrated_quota_config(
@@ -105,24 +113,10 @@ class ModalMixin:
         box = tk.Frame(tw, bg="#1c1c1e", padx=self.px(14), pady=self.px(12), highlightbackground="#3a3a3c", highlightthickness=1)
         box.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(box, text="统计与常驻规则", bg="#1c1c1e", fg="#ffffff", font=(FONT_UI, 9, "bold")).pack(anchor="w", pady=(0, self.px(4)))
+        tk.Label(box, text=tr("rules_title", self._lang), bg="#1c1c1e", fg="#ffffff", font=(FONT_UI, 9, "bold")).pack(anchor="w", pady=(0, self.px(4)))
         c_mult_s = f"{self._quota_cfg.carbon_multiplier:g}x"
         n_mult_s = f"{NEON_INPUT_PER_M / HYDROGEN_INPUT_PER_M:g}x"
-        rules = (
-            "1. 随 Antigravity 2.0 自动启动并后台常驻；点击右上角 ✕ 最小化至系统托盘，\n"
-            "   秒级实时计时，数据变更即时增量同步，右键托盘图标可彻底退出。\n"
-            "2. 工作时段严格以你本人发送消息的时间点为起止端点，最后一条消息后不加后台尾巴；\n"
-            "   相邻两次发消息无任务时 ≤ 30 分钟连入工时，有对话框任务运行（且任务停后空闲 ≤ 30 分钟）\n"
-            "   放宽至 ≤ 1 小时自动连入，孤立单条消息计 0 秒工时（额度正常统计）。\n"
-            "3. 未绑定工作区不单独展示项目，但正常计入总工时与总额度。\n"
-            f"4. 额度按 Carbon {c_mult_s} / Neon {n_mult_s} / Hydrogen / 其他折算；「周余」与「5h余」实时同步官方滚动窗口。\n"
-            "5. 换窗与冷缓存损益算法（静音弹窗）：\n"
-            "   · 512K 下 Carbon 压缩 1次或达 330K、Neon 压缩 1次或达 350K、Hydrogen 压缩 1次或达 400K 立即提醒换新\n"
-            "     （运行中超界限亦立即提醒，单轮内若上下文续增 ≥ 50K 再补弹第 2 次；最多 2 次，新压缩或发新消息后重置）；\n"
-            "   · 自动识别子代理与后台任务运行态，执行期间不误弹冷缓存提醒；\n"
-            "   · 闲置致缓存失效（Carbon ≥ 8分 / Neon ≥ 7分 / Hydrogen ≥ 20分）时对比冷重算与新开窗成本：\n"
-            "     短对话续聊更省则保持健康不打扰；长对话重算明显更贵时仅静音提醒 1 次。"
-        )
+        rules = tr("rules_body", self._lang, c_mult=c_mult_s, n_mult=n_mult_s)
         tk.Label(box, text=rules, bg="#1c1c1e", fg="#e5e5ea", justify="left", font=(FONT_UI, 9)).pack(anchor="w")
 
         tw.update_idletasks()
@@ -146,7 +140,7 @@ class ModalMixin:
             return
 
         win = tk.Toplevel(self.root)
-        win.title("额度与提醒设置")
+        win.title(tr("calib_win_title", self._lang))
         win.configure(bg=BG_PAGE)
         win.resizable(False, False)
         if ICON_PATH.exists():
@@ -165,14 +159,15 @@ class ModalMixin:
         cur_calibrated = bool(cur_q.get("calibrated"))
         cur_cycle_used = float(cur_q.get("cycle_used_pct", self._quota_cfg.anchor_weekly_used_pct))
         cur_cycle_left = float(cur_q.get("cycle_left_pct", max(0.0, 100.0 - cur_cycle_used)))
-        cur_cycle_reset = str(cur_q.get("cycle_reset_str", ""))
+        cur_cycle_reset = localize_reset_str(str(cur_q.get("cycle_reset_str", "")), self._lang)
         cur_5h_left = float(cur_q.get("five_hour_left_pct", 100.0))
 
-        tk.Label(card, text="额度校准与换窗提醒", bg=BG_CARD, fg=INK, font=(FONT_UI, 11, "bold")).pack(anchor="w")
-        sub_hint = "对照官方 Quota 面板 Weekly limit（如 80% left 即填已用 20%），保存立即生效。"
+        tk.Label(card, text=tr("calib_title", self._lang), bg=BG_CARD, fg=INK, font=(FONT_UI, 11, "bold")).pack(anchor="w")
+        sub_hint = tr("calib_hint", self._lang)
         if cur_calibrated:
-            reset_part = f"，{cur_cycle_reset}" if cur_cycle_reset else ""
-            sub_hint += f"\n当前测算：周余 {cur_cycle_left:.1f}%（已用 {cur_cycle_used:.1f}%{reset_part}） · 5h余 {cur_5h_left:.1f}%"
+            sep = "，" if self._lang == "zh" else ", "
+            reset_part = f"{sep}{cur_cycle_reset}" if cur_cycle_reset else ""
+            sub_hint += "\n" + tr("calib_cur", self._lang, left=cur_cycle_left, used=cur_cycle_used, reset=reset_part, fh=cur_5h_left)
         tk.Label(card, text=sub_hint, bg=BG_CARD, fg=INK_3, justify="left", font=(FONT_UI, 8)).pack(anchor="w", pady=(self.px(3), self.px(12)))
 
         default_used = round(cur_cycle_used, 1) if cur_calibrated and cur_cycle_used >= 0.1 else self._quota_cfg.anchor_weekly_used_pct
@@ -183,26 +178,26 @@ class ModalMixin:
 
         row1 = tk.Frame(card, bg=BG_CARD)
         row1.pack(fill=tk.X, pady=(0, self.px(8)))
-        tk.Label(row1, text="当前 7 天周期已用 (%)", bg=BG_CARD, fg=INK, font=(FONT_UI, 9)).pack(side=tk.LEFT)
+        tk.Label(row1, text=tr("calib_used_lbl", self._lang), bg=BG_CARD, fg=INK, font=(FONT_UI, 9)).pack(side=tk.LEFT)
         tk.Entry(row1, textvariable=used_var, width=10, font=(FONT_UI, 9), relief="solid", bd=1, justify="right").pack(side=tk.RIGHT)
 
         reset_row = tk.Frame(card, bg=BG_CARD)
         reset_row.pack(fill=tk.X, pady=(0, self.px(8)))
         tk.Checkbutton(
-            reset_row, text="官方已提前重置周额度（保留上限，从此刻重开新 7 天周期）",
+            reset_row, text=tr("calib_reset_chk", self._lang),
             variable=reset_cycle_var, bg=BG_CARD, fg=INK_2, activebackground=BG_CARD, selectcolor=BG_CARD,
             font=(FONT_UI, 8), cursor="hand2",
         ).pack(side=tk.LEFT)
 
         row2 = tk.Frame(card, bg=BG_CARD)
         row2.pack(fill=tk.X, pady=(0, self.px(8)))
-        tk.Label(row2, text="Carbon 相对 Hydrogen 倍率", bg=BG_CARD, fg=INK, font=(FONT_UI, 9)).pack(side=tk.LEFT)
+        tk.Label(row2, text=tr("calib_mult_lbl", self._lang), bg=BG_CARD, fg=INK, font=(FONT_UI, 9)).pack(side=tk.LEFT)
         tk.Entry(row2, textvariable=mult_var, width=10, font=(FONT_UI, 9), relief="solid", bd=1, justify="right").pack(side=tk.RIGHT)
 
         preset_row = tk.Frame(card, bg=BG_CARD)
         preset_row.pack(fill=tk.X, pady=(0, self.px(10)))
-        tk.Label(preset_row, text="常用倍率:", bg=BG_CARD, fg=INK_3, font=(FONT_UI, 8)).pack(side=tk.LEFT, padx=(0, self.px(6)))
-        for val_str, lbl in (("1.3333", "1.33x"), ("2.0", "2.0x"), ("2.6667", "2.67x"), ("3.0", "3.0x (实测)")):
+        tk.Label(preset_row, text=tr("calib_preset_lbl", self._lang), bg=BG_CARD, fg=INK_3, font=(FONT_UI, 8)).pack(side=tk.LEFT, padx=(0, self.px(6)))
+        for val_str, lbl in (("1.3333", "1.33x"), ("2.0", "2.0x"), ("2.6667", "2.67x"), ("3.0", tr("calib_preset_measured", self._lang))):
             tk.Button(
                 preset_row, text=lbl, command=lambda v=val_str: mult_var.set(v),
                 bg=BG_PAGE, fg=INK_2, bd=0, padx=self.px(8), pady=self.px(2), font=(FONT_UI, 8), cursor="hand2",
@@ -211,14 +206,14 @@ class ModalMixin:
         notify_row = tk.Frame(card, bg=BG_CARD)
         notify_row.pack(fill=tk.X, pady=(0, self.px(12)))
         tk.Checkbutton(
-            notify_row, text="对话触发「建议换新」时右下角弹窗提醒（不抢输入焦点）",
+            notify_row, text=tr("calib_notify_chk", self._lang),
             variable=notify_var, bg=BG_CARD, fg=INK, activebackground=BG_CARD, selectcolor=BG_CARD, font=(FONT_UI, 8), cursor="hand2",
         ).pack(side=tk.LEFT)
         tk.Button(
-            notify_row, text="预览提醒",
+            notify_row, text=tr("calib_preview", self._lang),
             command=lambda: self._show_switch_toast(
-                "GravityPulse · 换窗提醒预览 (Hydrogen)",
-                "Hydrogen 已累计压缩 2 次（继续压缩与推理损耗已超新建窗口成本），建议本轮结束后换新窗口清理旧问题包袱。",
+                tr("calib_preview_head", self._lang),
+                tr("calib_preview_body", self._lang),
             ),
             bg=BG_PAGE, fg=INK_2, bd=0, padx=self.px(8), pady=self.px(2), font=(FONT_UI, 8), cursor="hand2",
         ).pack(side=tk.RIGHT, padx=(self.px(8), 0))
@@ -250,11 +245,11 @@ class ModalMixin:
             self.refresh(force_recompute=True, schedule_next=False)
 
         tk.Button(
-            btn_row, text="取消", command=win.destroy,
+            btn_row, text=tr("btn_cancel", self._lang), command=win.destroy,
             bg=BG_PAGE, fg=INK_2, bd=0, padx=self.px(14), pady=self.px(5), font=(FONT_UI, 9), cursor="hand2",
         ).pack(side=tk.LEFT)
         tk.Button(
-            btn_row, text="保存并应用", command=on_save,
+            btn_row, text=tr("btn_save", self._lang), command=on_save,
             bg=INK, fg="#ffffff", bd=0, padx=self.px(16), pady=self.px(5), font=(FONT_UI, 9, "bold"), cursor="hand2",
         ).pack(side=tk.RIGHT)
 
@@ -288,7 +283,79 @@ class ModalMixin:
             self._render_tabs_and_rows(self._current_payload, preserve_scroll=False)
         self.show_window()
 
-    def _show_switch_toast(self, conv_header: str, detail_msg: str) -> None:
+    def _get_tray_menu_state(self) -> dict[str, object]:
+        return {"lang": self._lang, "startup_enabled": is_startup_installed()}
+
+    def _toggle_language(self) -> None:
+        self._lang = save_ui_language("en" if self._lang == "zh" else "zh")
+        self._hide_tooltip()
+        self._apply_language_static_ui()
+        if self._current_payload is not None:
+            self._apply_payload(self._current_payload, preserve_scroll=True)
+
+    def _handle_tray_action(self, cmd: str) -> None:
+        if cmd == "toggle_lang":
+            self._toggle_language()
+        elif cmd == "toggle_startup":
+            try:
+                if is_startup_installed():
+                    uninstall_startup_registry()
+                    self._show_switch_toast(
+                        tr("toast_startup_off_head", self._lang),
+                        tr("toast_startup_off_body", self._lang),
+                        badge_text=tr("toast_info_badge", self._lang),
+                        badge_color="#34c759",
+                    )
+                else:
+                    install_startup_registry()
+                    ensure_watcher_running()
+                    self._show_switch_toast(
+                        tr("toast_startup_on_head", self._lang),
+                        tr("toast_startup_on_body", self._lang),
+                        badge_text=tr("toast_info_badge", self._lang),
+                        badge_color="#34c759",
+                    )
+            except Exception as exc:
+                self._show_switch_toast(
+                    tr("toast_action_err_head", self._lang), str(exc),
+                    badge_text=tr("toast_info_badge", self._lang), badge_color="#ff6961",
+                )
+        elif cmd == "create_shortcut":
+            lang = self._lang
+
+            def _make() -> None:
+                try:
+                    from scripts.icon_builder import create_desktop_shortcut
+
+                    create_desktop_shortcut()
+                    self.root.after(
+                        0,
+                        lambda: self._show_switch_toast(
+                            tr("toast_shortcut_head", lang),
+                            tr("toast_shortcut_body", lang),
+                            badge_text=tr("toast_info_badge", lang),
+                            badge_color="#34c759",
+                        ),
+                    )
+                except Exception as exc:
+                    err = str(exc)
+                    self.root.after(
+                        0,
+                        lambda: self._show_switch_toast(
+                            tr("toast_action_err_head", lang), err,
+                            badge_text=tr("toast_info_badge", lang), badge_color="#ff6961",
+                        ),
+                    )
+
+            threading.Thread(target=_make, daemon=True).start()
+
+    def _show_switch_toast(
+        self,
+        conv_header: str,
+        detail_msg: str,
+        badge_text: str | None = None,
+        badge_color: str = "#ff6961",
+    ) -> None:
         """Render a silent, non-activating bottom-right visual popup without system sound."""
         self._dismiss_toast()
 
@@ -306,7 +373,8 @@ class ModalMixin:
 
         top_bar = tk.Frame(outer, bg="#1c1c1e")
         top_bar.pack(fill=tk.X)
-        tk.Label(top_bar, text="● 换窗建议提醒", bg="#1c1c1e", fg="#ff6961", font=(FONT_UI, 8, "bold")).pack(side=tk.LEFT)
+        badge = badge_text or tr("toast_switch_badge", self._lang)
+        tk.Label(top_bar, text=badge, bg="#1c1c1e", fg=badge_color, font=(FONT_UI, 8, "bold")).pack(side=tk.LEFT)
         close_lbl = tk.Label(top_bar, text="✕", bg="#1c1c1e", fg="#98989d", font=(FONT_UI, 9), padx=self.px(4), cursor="hand2")
         close_lbl.pack(side=tk.RIGHT)
         close_lbl.bind("<Button-1>", lambda _e: self._dismiss_toast())

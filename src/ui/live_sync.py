@@ -24,6 +24,7 @@ from src.core import (
     sync_telemetry_ledger,
 )
 from src.core.watcher import resolve_launch_command
+from src.ui.i18n import localize_duration, tr
 
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NO_WINDOW = 0x08000000
@@ -100,11 +101,11 @@ class LiveSyncMixin:
         human_str, hms_str, dialogs_changed = compute_live_display_update(cur, elapsed, now_bj)
         cur["total_human"] = human_str
         cur["total_hms"] = hms_str
-        self._cfg(self.total_human_lbl, text=human_str)
+        self._cfg(self.total_human_lbl, text=localize_duration(human_str, self._lang))
         self._cfg(self.total_hms_lbl, text=hms_str)
         if cur.get("live_tick_active"):
             cur["updated_at"] = now_bj.strftime("%H:%M:%S")
-            self._cfg(self.updated_lbl, text=f"更新于 {cur['updated_at']} · 实时同步中")
+            self._cfg(self.updated_lbl, text=tr("updated_live", self._lang, hms=cur["updated_at"]))
         if dialogs_changed:
             self._process_switch_notifications(cur.get("dialogs", []))
             active_tab = self.day_tab if mode == "day" else self.week_tab

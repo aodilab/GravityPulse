@@ -7,15 +7,20 @@ from pathlib import Path
 import queue
 import threading
 import time
+from typing import Callable
+
+from src.ui.i18n import tr
 
 _WM_DESTROY = 0x0002
 _WM_CLOSE = 0x0010
 _WM_USER = 0x0400
 _WM_TRAYICON = _WM_USER + 20
+_WM_UPDATE_TIP = _WM_USER + 21
 _WM_LBUTTONUP = 0x0202
 _WM_LBUTTONDBLCLK = 0x0203
 _WM_RBUTTONUP = 0x0205
 _NIM_ADD = 0x00000000
+_NIM_MODIFY = 0x00000001
 _NIM_DELETE = 0x00000002
 _NIF_MESSAGE = 0x00000001
 _NIF_ICON = 0x00000002
@@ -24,6 +29,7 @@ _IMAGE_ICON = 1
 _LR_LOADFROMFILE = 0x00000010
 _LR_DEFAULTSIZE = 0x00000040
 _MF_STRING = 0x00000000
+_MF_CHECKED = 0x00000008
 _MF_SEPARATOR = 0x00000800
 _TPM_RIGHTBUTTON = 0x0002
 _TPM_NONOTIFY = 0x0080
@@ -81,10 +87,17 @@ class _WNDCLASSEXW(ctypes.Structure):
 class SystemTrayIcon:
     """Native Win32 system tray icon with left-click restore and right-click context menu."""
 
-    def __init__(self, icon_path: Path, tooltip: str, cmd_queue: "queue.SimpleQueue[str]") -> None:
+    def __init__(
+        self,
+        icon_path: Path,
+        tooltip: str,
+        cmd_queue: "queue.SimpleQueue[str]",
+        menu_state_fn: Callable[[], dict[str, object]] | None = None,
+    ) -> None:
         self._icon_path = icon_path
         self._tooltip = tooltip[:127]
         self._cmd_queue = cmd_queue
+        self._menu_state_fn = menu_state_fn
         self._hwnd: wintypes.HWND | None = None
         self._hicon: wintypes.HICON | None = None
         self._nid: _NOTIFYICONDATAW | None = None
@@ -94,6 +107,18 @@ class SystemTrayIcon:
 
     def start(self) -> None:
         self._thread.start()
+
+    def set_tooltip(self, tooltip: str) -> None:
+        self._tooltip = tooltip[:127]
+        hwnd = self._hwnd
+        if hwnd:
+            try:
+                u32 = ctypes.WinDLL("user32", use_last_error=True)
+                u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+                u32.PostMessageW.restype = wintypes.BOOL
+                u32.PostMessageW(hwnd, _WM_UPDATE_TIP, 0, 0)
+            except Exception:
+                pass
 
     def stop(self) -> None:
         hwnd = self._hwnd
@@ -177,10 +202,18 @@ class SystemTrayIcon:
                     if ev == _WM_RBUTTONUP:
                         hmenu = u32.CreatePopupMenu()
                         if hmenu:
-                            u32.AppendMenuW(hmenu, _MF_STRING, 1, "打开 GravityPulse 面板")
-                            u32.AppendMenuW(hmenu, _MF_STRING, 2, "立即刷新数据")
+                            state = self._menu_state_fn() if self._menu_state_fn else {}
+                            lang = str(state.get("lang", "zh"))
+                            startup_on = bool(state.get("startup_enabled", False))
+                            u32.AppendMenuW(hmenu, _MF_STRING, 1, tr("tray_open", lang))
+                            u32.AppendMenuW(hmenu, _MF_STRING, 2, tr("tray_refresh", lang))
                             u32.AppendMenuW(hmenu, _MF_SEPARATOR, 0, None)
-                            u32.AppendMenuW(hmenu, _MF_STRING, 3, "退出常驻程序")
+                            st_flags = _MF_STRING | (_MF_CHECKED if startup_on else 0)
+                            u32.AppendMenuW(hmenu, st_flags, 4, tr("tray_startup", lang))
+                            u32.AppendMenuW(hmenu, _MF_STRING, 5, tr("tray_shortcut", lang))
+                            u32.AppendMenuW(hmenu, _MF_STRING, 6, tr("tray_lang", lang))
+                            u32.AppendMenuW(hmenu, _MF_SEPARATOR, 0, None)
+                            u32.AppendMenuW(hmenu, _MF_STRING, 3, tr("tray_quit", lang))
                             pt = wintypes.POINT()
                             u32.GetCursorPos(ctypes.byref(pt))
                             u32.SetForegroundWindow(hwnd)
@@ -193,13 +226,22 @@ class SystemTrayIcon:
                             )
                             u32.PostMessageW(hwnd, 0, 0, 0)
                             u32.DestroyMenu(hmenu)
-                            if cmd == 1:
-                                self._cmd_queue.put("show")
-                            elif cmd == 2:
-                                self._cmd_queue.put("refresh")
-                            elif cmd == 3:
-                                self._cmd_queue.put("quit")
+                            cmd_map = {
+                                1: "show",
+                                2: "refresh",
+                                3: "quit",
+                                4: "toggle_startup",
+                                5: "create_shortcut",
+                                6: "toggle_lang",
+                            }
+                            if cmd in cmd_map:
+                                self._cmd_queue.put(cmd_map[cmd])
                         return 0
+                elif msg == _WM_UPDATE_TIP:
+                    if self._nid is not None:
+                        self._nid.szTip = self._tooltip
+                        sh32.Shell_NotifyIconW(_NIM_MODIFY, ctypes.byref(self._nid))
+                    return 0
                 elif self._taskbar_msg and msg == self._taskbar_msg:
                     self._add_tray_icon(sh32)
                     return 0

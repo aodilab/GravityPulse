@@ -13,11 +13,11 @@
 > **免责声明**：GravityPulse 是非官方社区开源工具，仅以只读方式解析 `~/.gemini/antigravity` 下的本地文件。若官方后续调整本地存储结构，可能需要同步适配。
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.png" alt="GravityPulse 主面板" width="840" />
+  <img src="docs/screenshots/dashboard_zh.png" alt="GravityPulse 主面板（中文）" width="840" />
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/toast.png" alt="右下角无焦点静音换窗提醒" width="380" />
+  <img src="docs/screenshots/toast_zh.png" alt="右下角无焦点静音换窗提醒（中文）" width="380" />
 </p>
 
 ---
@@ -34,8 +34,8 @@
 ### 方式一：下载绿色版（免配 Python）
 
 1. 前往 [Releases](../../releases) 页面下载最新的 `GravityPulse-win64.zip`。
-2. 解压到任意目录，双击运行 `GravityPulse.exe`。
-3. 如需桌面快捷方式与伴随自启，在该目录终端执行 `GravityPulse.exe --setup`。
+2. 解压到任意目录，双击运行 `GravityPulse.exe`（未签名绿色包首次启动若触发 Windows SmartScreen 提示，点「更多信息 → 仍要运行」即可）。
+3. 界面会按 Windows 系统语言自动显示中文或英文；如需切换语言、开启「跟随 Antigravity 开机自启」或「创建桌面快捷方式」，直接右键系统托盘图标操作，无需命令行。
 
 ### 方式二：源码运行
 

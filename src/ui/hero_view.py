@@ -17,6 +17,7 @@ from config.settings import (
     INK_3,
     MIN_VISIBLE_DATE,
 )
+from src.ui.i18n import localize_duration, localize_weekday, tr
 from src.ui.primitives import make_timeline_image
 from src.ui.table_views import format_ranked_flat_model_parts
 
@@ -28,7 +29,13 @@ class HeroViewMixin:
         if is_active_period and running_count > 0:
             self._itemcfg(self.status_canvas, self.status_bg_item, image=self._imgs["pill_run"])
             self._itemcfg(self.status_canvas, self.status_dot_item, fill=GREEN_DOT)
-            self._itemcfg(self.status_canvas, self.status_text_item, text=f"{running_count} 个对话运行中", fill=GREEN_TEXT)
+            status_key = "status_running_one" if running_count == 1 else "status_running"
+            self._itemcfg(
+                self.status_canvas,
+                self.status_text_item,
+                text=tr(status_key, self._lang, n=running_count),
+                fill=GREEN_TEXT,
+            )
         elif is_active_period:
             self._itemcfg(self.status_canvas, self.status_bg_item, image=self._imgs["pill_idle"])
             self._itemcfg(self.status_canvas, self.status_dot_item, fill=INK_3)
@@ -36,29 +43,30 @@ class HeroViewMixin:
         else:
             self._itemcfg(self.status_canvas, self.status_bg_item, image=self._imgs["pill_idle"])
             self._itemcfg(self.status_canvas, self.status_dot_item, fill=INK_3)
-            self._itemcfg(self.status_canvas, self.status_text_item, text="历史归档", fill=INK_2)
+            self._itemcfg(self.status_canvas, self.status_text_item, text=tr("status_archived", self._lang), fill=INK_2)
 
     def _update_hero_quota(self, quota: dict, is_week: bool, is_active: bool) -> None:
         if not quota.get("calibrated"):
-            self._cfg(self.hero_quota_main, text="点击右上角「校准」配置额度")
+            self._cfg(self.hero_quota_main, text=tr("quota_uncalibrated", self._lang))
             self._cfg(self.hero_quota_sub, text="")
             return
         if is_active:
-            prefix = "本周耗周额度 " if is_week else "今日耗周额度 "
-            main_txt = f"{prefix}{quota['weekly_pct']:.1f}%  ·  周余 {quota.get('cycle_left_pct', 100.0):.1f}%"
+            key = "quota_week_active" if is_week else "quota_day_active"
+            main_txt = tr(key, self._lang, pct=quota["weekly_pct"], left=quota.get("cycle_left_pct", 100.0))
         else:
-            prefix = "该周耗周额度 " if is_week else "当日耗周额度 "
-            main_txt = f"{prefix}{quota['weekly_pct']:.1f}%"
+            key = "quota_week_hist" if is_week else "quota_day_hist"
+            main_txt = tr(key, self._lang, pct=quota["weekly_pct"])
         self._cfg(self.hero_quota_main, text=main_txt)
 
-        parts = format_ranked_flat_model_parts(quota)
+        parts = format_ranked_flat_model_parts(quota, lang=self._lang)
         if is_active:
-            parts.append(f"5h余 {quota.get('five_hour_left_pct', 100.0):.1f}%")
+            parts.append(tr("quota_5h_left", self._lang, left=quota.get("five_hour_left_pct", 100.0)))
         self._cfg(self.hero_quota_sub, text="  ·  ".join(parts))
 
     def _render_day_hero(self, data: dict) -> None:
-        day_tag = " · 今天" if data["is_today"] else ""
-        self._itemcfg(self.date_canvas, self.date_text_item, text=f"{data['target_date']} {data['weekday_cn']}{day_tag}")
+        day_tag = tr("today_tag", self._lang) if data["is_today"] else ""
+        wd = localize_weekday(data["weekday_cn"], self._lang)
+        self._itemcfg(self.date_canvas, self.date_text_item, text=f"{data['target_date']} {wd}{day_tag}")
         self._itemcfg(
             self.date_canvas,
             self.date_prev_icon,
@@ -70,27 +78,27 @@ class HeroViewMixin:
             image=self._imgs["chev_r"] if data["can_next"] else self._imgs["chev_r_dis"],
         )
 
-        self._itemcfg(self.today_btn_canvas, self.today_btn_text, text="回到今天")
+        self._itemcfg(self.today_btn_canvas, self.today_btn_text, text=tr("back_today", self._lang))
         self._set_today_btn_visible(not bool(data["is_today"]))
 
         self._cfg(
             self.hero_eyebrow,
-            text="今日累计工作时间" if data["is_today"] else f"{data['target_date']} 累计工作时间",
+            text=tr("eyebrow_today", self._lang) if data["is_today"] else tr("eyebrow_day", self._lang, date=data["target_date"]),
         )
-        self._set_status_pill(data["is_today"], data["running_count"], "当前空闲")
+        self._set_status_pill(data["is_today"], data["running_count"], tr("status_idle_day", self._lang))
 
-        self._cfg(self.total_human_lbl, text=data["total_human"])
+        self._cfg(self.total_human_lbl, text=localize_duration(data["total_human"], self._lang))
         self._cfg(self.total_hms_lbl, text=data["total_hms"])
         self._update_hero_quota(data.get("quota", {}), is_week=False, is_active=bool(data["is_today"]))
         meta_text = (
-            f"{data['interval_count']} 个工作段  ·  {data['project_count']} 个项目"
+            tr("meta_day", self._lang, iv=data["interval_count"], proj=data["project_count"])
             if data["interval_count"] > 0 or data["project_count"] > 0
-            else "暂无工作记录"
+            else tr("meta_empty", self._lang)
         )
         self._cfg(self.hero_meta_lbl, text=meta_text)
 
         segs = [(s["start_pct"], s["width_pct"]) for s in data["timeline_segments"]]
-        viz_sig = ("day", tuple(segs))
+        viz_sig = ("day", self._lang, tuple(segs))
         if viz_sig == self._last_viz_sig:
             return
         self._last_viz_sig = viz_sig
@@ -113,7 +121,7 @@ class HeroViewMixin:
         self.hero_viz.delete("_stale_viz")
 
     def _render_week_hero(self, data: dict) -> None:
-        wk_tag = " · 本周" if data["is_current_week"] else ""
+        wk_tag = tr("week_tag", self._lang) if data["is_current_week"] else ""
         s_short = data["week_start"][5:]
         e_short = data["week_end"][5:]
         self._itemcfg(self.date_canvas, self.date_text_item, text=f"{s_short} ~ {e_short}{wk_tag}")
@@ -128,22 +136,29 @@ class HeroViewMixin:
             image=self._imgs["chev_r"] if data["can_next"] else self._imgs["chev_r_dis"],
         )
 
-        self._itemcfg(self.today_btn_canvas, self.today_btn_text, text="回到本周")
+        self._itemcfg(self.today_btn_canvas, self.today_btn_text, text=tr("back_week", self._lang))
         self._set_today_btn_visible(not bool(data["is_current_week"]))
 
-        self._cfg(self.hero_eyebrow, text="本周累计工作时间")
-        self._set_status_pill(data["is_current_week"], data["running_count"], "本周空闲")
+        self._cfg(self.hero_eyebrow, text=tr("eyebrow_week", self._lang))
+        self._set_status_pill(data["is_current_week"], data["running_count"], tr("status_idle_week", self._lang))
 
-        self._cfg(self.total_human_lbl, text=data["total_human"])
+        self._cfg(self.total_human_lbl, text=localize_duration(data["total_human"], self._lang))
         self._cfg(self.total_hms_lbl, text=data["total_hms"])
         self._update_hero_quota(data.get("quota", {}), is_week=True, is_active=bool(data["is_current_week"]))
         self._cfg(
             self.hero_meta_lbl,
-            text=f"活跃 {data['active_days']}/7 天  ·  日均 {data['avg_human']}  ·  {data['project_count']} 个项目",
+            text=tr(
+                "meta_week",
+                self._lang,
+                days=data["active_days"],
+                avg=localize_duration(data["avg_human"], self._lang),
+                proj=data["project_count"],
+            ),
         )
 
         viz_sig = (
             "week",
+            self._lang,
             bool(data["is_current_week"]),
             tuple(
                 (d["date"], d["is_today"], d["is_future"], d["compact_hm"], d["total_seconds"], d["bar_pct"])
@@ -181,7 +196,7 @@ class HeroViewMixin:
                 bar_col = INK if (d["is_today"] or not data["is_current_week"]) else "#3a3a3c"
                 self._draw_rounded_rect_on_canvas(self.hero_viz, bx0, fy0, bx1, track_top + track_h, self.px(5), bar_col)
 
-            day_text = f"{d['weekday_cn']} {d['short_date']}"
+            day_text = f"{localize_weekday(d['weekday_cn'], self._lang)} {d['short_date']}"
             day_col = INK if d["is_today"] else INK_3
             self.hero_viz.create_text(
                 cx, track_top + track_h + self.px(10),
@@ -290,14 +305,14 @@ class HeroViewMixin:
         prev_y = self.list_canvas.yview()[0] if keep_scroll else 0.0
         prev_hover = self._hover_row_idx if same_view_ctx else -1
 
-        self._cfg(self.tab1_lbl, text="对话框")
+        self._cfg(self.tab1_lbl, text=tr("tab_dialogs", self._lang))
         if mode == "day":
-            self._cfg(self.tab2_lbl, text="项目明细")
-            self._cfg(self.tab3_lbl, text="工作时段")
+            self._cfg(self.tab2_lbl, text=tr("tab_projects_day", self._lang))
+            self._cfg(self.tab3_lbl, text=tr("tab_intervals", self._lang))
             active_idx = {"ctx": 0, "conv": 1, "iv": 2}.get(self.day_tab, 0)
         else:
-            self._cfg(self.tab2_lbl, text="每日汇总")
-            self._cfg(self.tab3_lbl, text="本周项目")
+            self._cfg(self.tab2_lbl, text=tr("tab_days", self._lang))
+            self._cfg(self.tab3_lbl, text=tr("tab_projects_week", self._lang))
             active_idx = {"ctx": 0, "days": 1, "conv": 2}.get(self.week_tab, 0)
 
         for idx, (lbl, line) in enumerate((
@@ -312,11 +327,11 @@ class HeroViewMixin:
                 self._cfg(lbl, fg=INK_3, font=(FONT_UI, 10))
                 self._cfg(line, bg=BG_CARD)
 
-        self._cfg(self.updated_lbl, text=f"更新于 {data['updated_at']} · 实时同步中")
+        self._cfg(self.updated_lbl, text=tr("updated_live", self._lang, hms=data["updated_at"]))
 
         calibrated = bool(data.get("quota", {}).get("calibrated", False))
-        head_sig = (mode, tab_key)
-        rows_sig = self._compute_rows_signature(data, mode, tab_key, calibrated)
+        head_sig = (mode, tab_key, self._lang)
+        rows_sig = (self._lang, self._compute_rows_signature(data, mode, tab_key, calibrated))
         if head_sig == self._last_head_sig and rows_sig == self._last_rows_sig:
             if not keep_scroll and prev_y == 0.0 and self.list_canvas.yview()[0] > 0.0:
                 self.list_canvas.yview_moveto(0.0)
@@ -336,7 +351,7 @@ class HeroViewMixin:
         if mode == "day":
             if self.day_tab == "conv":
                 content_h = self._draw_projects_canvas(
-                    data["projects"], quota_label="今日占周额度", calibrated=calibrated, draw_head=redraw_head
+                    data["projects"], quota_label=tr("quota_col_day", self._lang), calibrated=calibrated, draw_head=redraw_head
                 )
             elif self.day_tab == "iv":
                 content_h = self._draw_intervals_canvas(data["intervals"], calibrated=calibrated, draw_head=redraw_head)
@@ -347,7 +362,7 @@ class HeroViewMixin:
                 content_h = self._draw_week_days_canvas(data["days"], calibrated=calibrated, draw_head=redraw_head)
             elif self.week_tab == "conv":
                 content_h = self._draw_projects_canvas(
-                    data["projects"], quota_label="本周占周额度", calibrated=calibrated, draw_head=redraw_head
+                    data["projects"], quota_label=tr("quota_col_week", self._lang), calibrated=calibrated, draw_head=redraw_head
                 )
             else:
                 content_h = self._draw_dialogs_canvas(data.get("dialogs", []), draw_head=redraw_head)
