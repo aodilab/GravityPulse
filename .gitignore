@@ -1,0 +1,23 @@
+# Python bytecode & virtual environments
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Runtime user state & temporary scratch artifacts
+data/
+scratch/
+*.log
+*.tmp
+*.bak
+
+# Packaging & IDE caches
+dist/
+build/
+*.egg-info/
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
