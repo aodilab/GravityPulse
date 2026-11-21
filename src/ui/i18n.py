@@ -6,8 +6,9 @@ import json
 import locale
 from pathlib import Path
 import re
+import subprocess
 
-from config.settings import DEFAULT_UI_PREFS_PATH
+from config.settings import DEFAULT_UI_PREFS_PATH, IS_MACOS, IS_WINDOWS
 
 SUPPORTED_LANGS = ("zh", "en")
 
@@ -276,16 +277,45 @@ def normalize_lang(raw: str | None) -> str | None:
     return None
 
 
-def detect_system_language() -> str:
-    """Detect Windows UI language via kernel32 (`LANG_CHINESE = 0x04`), falling back to locale."""
-    try:
-        lang_id = int(ctypes.windll.kernel32.GetUserDefaultUILanguage())
-        if (lang_id & 0x3FF) == 0x04:
+def parse_macos_apple_languages(raw: str) -> str | None:
+    """Parse `defaults read -g AppleLanguages` output and return `'zh'` or `'en'`."""
+    for m in re.finditer(r'"?([A-Za-z]{2,3}(?:-[A-Za-z0-9]+)*)"?', raw):
+        token = m.group(1).lower()
+        if token.startswith("zh"):
             return "zh"
-        if lang_id > 0:
+        if len(token) >= 2:
             return "en"
-    except Exception:
-        pass
+    return None
+
+
+def detect_system_language() -> str:
+    """Detect OS UI language (Win32 on Windows, NSLocale/AppleLanguages on macOS, then locale)."""
+    if IS_WINDOWS:
+        try:
+            lang_id = int(ctypes.windll.kernel32.GetUserDefaultUILanguage())
+            if (lang_id & 0x3FF) == 0x04:
+                return "zh"
+            if lang_id > 0:
+                return "en"
+        except Exception:
+            pass
+    elif IS_MACOS:
+        try:
+            from Foundation import NSLocale
+
+            langs = list(NSLocale.preferredLanguages() or [])
+            if langs:
+                return "zh" if str(langs[0]).lower().startswith("zh") else "en"
+        except Exception:
+            pass
+        try:
+            res = subprocess.run(["defaults", "read", "-g", "AppleLanguages"], capture_output=True, text=True, timeout=2)
+            if res.returncode == 0:
+                parsed = parse_macos_apple_languages(res.stdout)
+                if parsed:
+                    return parsed
+        except (OSError, subprocess.SubprocessError):
+            pass
     try:
         loc = locale.getlocale()[0] or ""
         if loc.lower().startswith(("zh", "chinese")):

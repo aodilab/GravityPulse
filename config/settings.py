@@ -5,14 +5,21 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sys
 
+IS_WINDOWS = sys.platform == "win32"
+IS_MACOS = sys.platform == "darwin"
 IS_FROZEN = bool(getattr(sys, "frozen", False))
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", PROJECT_ROOT)) if IS_FROZEN else PROJECT_ROOT
 RUNTIME_ROOT = Path(sys.executable).resolve().parent if IS_FROZEN else PROJECT_ROOT
 ASSETS_DIR = BUNDLE_ROOT / "assets"
-DATA_DIR = RUNTIME_ROOT / "data"
-SCRATCH_DIR = RUNTIME_ROOT / "scratch"
+DATA_DIR = (
+    Path.home() / "Library" / "Application Support" / "GravityPulse"
+    if (IS_MACOS and IS_FROZEN)
+    else RUNTIME_ROOT / "data"
+)
+SCRATCH_DIR = DATA_DIR / "scratch" if (IS_MACOS and IS_FROZEN) else RUNTIME_ROOT / "scratch"
 ICON_PATH = ASSETS_DIR / "gravitypulse.ico"
+ICNS_PATH = ASSETS_DIR / "gravitypulse.icns"
 
 LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
 MIN_VISIBLE_DATE: date | None = None
@@ -97,15 +104,18 @@ FALLBACK_MODEL_FAMILIES: dict[int, str] = {
     1669: "exclude",   # Gemini Flash (Orchestrator worker)
 }
 
-# Win32 Singleton & Companion Watcher Identifiers
+# Platform Singleton & Companion Watcher Identifiers
 APP_USER_MODEL_ID = "GravityPulse.Desktop.App"
 WATCHER_MUTEX_NAME = "Local\\GravityPulseWatcherSingleton"
 SINGLETON_MUTEX_NAME = "Local\\GravityPulseAppSingleton"
 SHOW_EVENT_NAME = "Local\\GravityPulseShowEvent"
 TARGET_EXE_NAMES = {"antigravity.exe"}
+TARGET_MACOS_NAMES = {"antigravity"}
 WATCHER_POLL_SEC = 3.0
 RUN_REG_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
 RUN_REG_VALUE_NAME = "GravityPulseWatcher"
+MACOS_LAUNCH_AGENT_LABEL = "com.aodilab.gravitypulse.watcher"
+MACOS_LAUNCH_AGENT_PLIST = Path.home() / "Library" / "LaunchAgents" / f"{MACOS_LAUNCH_AGENT_LABEL}.plist"
 
 # Desktop UI Tokens & Timers
 BG_PAGE = "#f5f5f7"
@@ -120,7 +130,7 @@ BAR_FILL = "#b8b8bf"
 GREEN_TEXT = "#1b6d2f"
 GREEN_BG = "#eaf5ed"
 GREEN_DOT = "#34c759"
-FONT_UI = "Microsoft YaHei UI"
+FONT_UI = "PingFang SC" if IS_MACOS else ("Microsoft YaHei UI" if IS_WINDOWS else "Helvetica")
 
 REFRESH_MS = 30_000    # 30s baseline fallback incremental auto-refresh
 MONITOR_MS = 15_000    # 15s lightweight background switch-alert check

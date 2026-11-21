@@ -15,11 +15,23 @@ from config.settings import (
     INK,
     INK_2,
     INK_3,
+    IS_MACOS,
     MIN_VISIBLE_DATE,
 )
 from src.ui.i18n import localize_duration, localize_weekday, tr
 from src.ui.primitives import make_timeline_image
 from src.ui.table_views import format_ranked_flat_model_parts
+
+
+def compute_mousewheel_units(delta: int, *, is_macos: bool = IS_MACOS) -> int:
+    """Convert platform `<MouseWheel>` event delta into Tk yview scroll units."""
+    if delta == 0:
+        return 0
+    if is_macos:
+        return -int(delta)
+    if abs(delta) >= 120:
+        return int(-1 * (delta / 120))
+    return -1 if delta > 0 else 1
 
 
 class HeroViewMixin:
@@ -417,8 +429,10 @@ class HeroViewMixin:
         view_h = self.list_canvas.winfo_height()
         if content_h <= view_h:
             return
-        self.list_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-        self._draw_thin_scrollbar()
+        units = compute_mousewheel_units(int(getattr(event, "delta", 0)))
+        if units:
+            self.list_canvas.yview_scroll(units, "units")
+            self._draw_thin_scrollbar()
 
     def _draw_thin_scrollbar(self) -> None:
         first, last = self.list_canvas.yview()

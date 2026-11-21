@@ -1,91 +1,91 @@
-"""Native Win32 system tray icon running on a dedicated message-loop daemon thread."""
+"""Cross-platform system tray / menu bar icon (Win32 NotifyIcon on Windows, NSStatusBar on macOS)."""
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from pathlib import Path
 import queue
 import threading
 import time
 from typing import Callable
 
+from config.settings import IS_MACOS, IS_WINDOWS
 from src.ui.i18n import tr
 
-_WM_DESTROY = 0x0002
-_WM_CLOSE = 0x0010
-_WM_USER = 0x0400
-_WM_TRAYICON = _WM_USER + 20
-_WM_UPDATE_TIP = _WM_USER + 21
-_WM_LBUTTONUP = 0x0202
-_WM_LBUTTONDBLCLK = 0x0203
-_WM_RBUTTONUP = 0x0205
-_NIM_ADD = 0x00000000
-_NIM_MODIFY = 0x00000001
-_NIM_DELETE = 0x00000002
-_NIF_MESSAGE = 0x00000001
-_NIF_ICON = 0x00000002
-_NIF_TIP = 0x00000004
-_IMAGE_ICON = 1
-_LR_LOADFROMFILE = 0x00000010
-_LR_DEFAULTSIZE = 0x00000040
-_MF_STRING = 0x00000000
-_MF_CHECKED = 0x00000008
-_MF_SEPARATOR = 0x00000800
-_TPM_RIGHTBUTTON = 0x0002
-_TPM_NONOTIFY = 0x0080
-_TPM_RETURNCMD = 0x0100
+if IS_WINDOWS:
+    from ctypes import wintypes
 
-_WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
+    _WM_DESTROY = 0x0002
+    _WM_CLOSE = 0x0010
+    _WM_USER = 0x0400
+    _WM_TRAYICON = _WM_USER + 20
+    _WM_UPDATE_TIP = _WM_USER + 21
+    _WM_LBUTTONUP = 0x0202
+    _WM_LBUTTONDBLCLK = 0x0203
+    _WM_RBUTTONUP = 0x0205
+    _NIM_ADD = 0x00000000
+    _NIM_MODIFY = 0x00000001
+    _NIM_DELETE = 0x00000002
+    _NIF_MESSAGE = 0x00000001
+    _NIF_ICON = 0x00000002
+    _NIF_TIP = 0x00000004
+    _IMAGE_ICON = 1
+    _LR_LOADFROMFILE = 0x00000010
+    _LR_DEFAULTSIZE = 0x00000040
+    _MF_STRING = 0x00000000
+    _MF_CHECKED = 0x00000008
+    _MF_SEPARATOR = 0x00000800
+    _TPM_RIGHTBUTTON = 0x0002
+    _TPM_NONOTIFY = 0x0080
+    _TPM_RETURNCMD = 0x0100
 
+    _WNDPROC = ctypes.WINFUNCTYPE(ctypes.c_ssize_t, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 
-class _GUID(ctypes.Structure):
-    _fields_ = [
-        ("Data1", wintypes.DWORD),
-        ("Data2", wintypes.WORD),
-        ("Data3", wintypes.WORD),
-        ("Data4", wintypes.ubyte * 8 if hasattr(wintypes, "ubyte") else ctypes.c_ubyte * 8),
-    ]
+    class _GUID(ctypes.Structure):
+        _fields_ = [
+            ("Data1", wintypes.DWORD),
+            ("Data2", wintypes.WORD),
+            ("Data3", wintypes.WORD),
+            ("Data4", wintypes.ubyte * 8 if hasattr(wintypes, "ubyte") else ctypes.c_ubyte * 8),
+        ]
 
+    class _NOTIFYICONDATAW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("hWnd", wintypes.HWND),
+            ("uID", wintypes.UINT),
+            ("uFlags", wintypes.UINT),
+            ("uCallbackMessage", wintypes.UINT),
+            ("hIcon", wintypes.HICON),
+            ("szTip", wintypes.WCHAR * 128),
+            ("dwState", wintypes.DWORD),
+            ("dwStateMask", wintypes.DWORD),
+            ("szInfo", wintypes.WCHAR * 256),
+            ("uTimeoutOrVersion", wintypes.UINT),
+            ("szInfoTitle", wintypes.WCHAR * 64),
+            ("dwInfoFlags", wintypes.DWORD),
+            ("guidItem", _GUID),
+            ("hBalloonIcon", wintypes.HICON),
+        ]
 
-class _NOTIFYICONDATAW(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wintypes.DWORD),
-        ("hWnd", wintypes.HWND),
-        ("uID", wintypes.UINT),
-        ("uFlags", wintypes.UINT),
-        ("uCallbackMessage", wintypes.UINT),
-        ("hIcon", wintypes.HICON),
-        ("szTip", wintypes.WCHAR * 128),
-        ("dwState", wintypes.DWORD),
-        ("dwStateMask", wintypes.DWORD),
-        ("szInfo", wintypes.WCHAR * 256),
-        ("uTimeoutOrVersion", wintypes.UINT),
-        ("szInfoTitle", wintypes.WCHAR * 64),
-        ("dwInfoFlags", wintypes.DWORD),
-        ("guidItem", _GUID),
-        ("hBalloonIcon", wintypes.HICON),
-    ]
-
-
-class _WNDCLASSEXW(ctypes.Structure):
-    _fields_ = [
-        ("cbSize", wintypes.UINT),
-        ("style", wintypes.UINT),
-        ("lpfnWndProc", _WNDPROC),
-        ("cbClsExtra", ctypes.c_int),
-        ("cbWndExtra", ctypes.c_int),
-        ("hInstance", wintypes.HINSTANCE),
-        ("hIcon", wintypes.HICON),
-        ("hCursor", wintypes.HANDLE),
-        ("hbrBackground", wintypes.HBRUSH),
-        ("lpszMenuName", wintypes.LPCWSTR),
-        ("lpszClassName", wintypes.LPCWSTR),
-        ("hIconSm", wintypes.HICON),
-    ]
+    class _WNDCLASSEXW(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.UINT),
+            ("style", wintypes.UINT),
+            ("lpfnWndProc", _WNDPROC),
+            ("cbClsExtra", ctypes.c_int),
+            ("cbWndExtra", ctypes.c_int),
+            ("hInstance", wintypes.HINSTANCE),
+            ("hIcon", wintypes.HICON),
+            ("hCursor", wintypes.HANDLE),
+            ("hbrBackground", wintypes.HBRUSH),
+            ("lpszMenuName", wintypes.LPCWSTR),
+            ("lpszClassName", wintypes.LPCWSTR),
+            ("hIconSm", wintypes.HICON),
+        ]
 
 
 class SystemTrayIcon:
-    """Native Win32 system tray icon with left-click restore and right-click context menu."""
+    """Resident tray / menu bar icon with platform-native backend (Win32 or macOS NSStatusBar)."""
 
     def __init__(
         self,
@@ -98,20 +98,35 @@ class SystemTrayIcon:
         self._tooltip = tooltip[:127]
         self._cmd_queue = cmd_queue
         self._menu_state_fn = menu_state_fn
-        self._hwnd: wintypes.HWND | None = None
-        self._hicon: wintypes.HICON | None = None
-        self._nid: _NOTIFYICONDATAW | None = None
-        self._wndproc_ref: _WNDPROC | None = None
+        self._mac_tray = None
+        if IS_MACOS:
+            from src.ui.macos_tray import MacMenuBarTray
+
+            self._mac_tray = MacMenuBarTray(icon_path, tooltip, cmd_queue, menu_state_fn)
+        self._hwnd = None
+        self._hicon = None
+        self._nid = None
+        self._wndproc_ref = None
         self._taskbar_msg: int = 0
-        self._thread = threading.Thread(target=self._run, name="GravityPulseTray", daemon=True)
+        self._thread = (
+            threading.Thread(target=self._run, name="GravityPulseTray", daemon=True)
+            if IS_WINDOWS
+            else None
+        )
 
     def start(self) -> None:
-        self._thread.start()
+        if self._mac_tray is not None:
+            self._mac_tray.start()
+        elif self._thread is not None:
+            self._thread.start()
 
     def set_tooltip(self, tooltip: str) -> None:
         self._tooltip = tooltip[:127]
+        if self._mac_tray is not None:
+            self._mac_tray.set_tooltip(self._tooltip)
+            return
         hwnd = self._hwnd
-        if hwnd:
+        if IS_WINDOWS and hwnd:
             try:
                 u32 = ctypes.WinDLL("user32", use_last_error=True)
                 u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -121,8 +136,11 @@ class SystemTrayIcon:
                 pass
 
     def stop(self) -> None:
+        if self._mac_tray is not None:
+            self._mac_tray.stop()
+            return
         hwnd = self._hwnd
-        if hwnd:
+        if IS_WINDOWS and hwnd:
             try:
                 u32 = ctypes.WinDLL("user32", use_last_error=True)
                 u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
@@ -131,9 +149,9 @@ class SystemTrayIcon:
             except Exception:
                 pass
 
-    def _add_tray_icon(self, shell32: ctypes.WinDLL) -> None:
-        if self._nid is not None:
-            shell32.Shell_NotifyIconW(_NIM_ADD, ctypes.byref(self._nid))
+    def _add_tray_icon(self, shell32: object) -> None:
+        if IS_WINDOWS and self._nid is not None:
+            shell32.Shell_NotifyIconW(_NIM_ADD, ctypes.byref(self._nid))  # type: ignore[attr-defined]
 
     def _run(self) -> None:
         try:

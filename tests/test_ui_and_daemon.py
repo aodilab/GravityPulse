@@ -1,8 +1,6 @@
 """Unit tests for desktop UI transitions, silent popup policy, companion watcher, and config storage."""
 from __future__ import annotations
 
-import ctypes
-from ctypes import wintypes
 from datetime import date, datetime
 import inspect
 from pathlib import Path
@@ -12,7 +10,7 @@ import tkinter as tk
 import unittest
 from unittest import mock
 
-from config.settings import APP_USER_MODEL_ID, LOCAL_TZ, MIN_VISIBLE_DATE, PROJECT_ROOT, REFRESH_MS, SINGLETON_MUTEX_NAME
+from config.settings import APP_USER_MODEL_ID, IS_WINDOWS, LOCAL_TZ, MIN_VISIBLE_DATE, PROJECT_ROOT, REFRESH_MS, SINGLETON_MUTEX_NAME
 from src.core import (
     DayReport,
     QuotaConfig,
@@ -43,16 +41,7 @@ class TestUiAndDaemon(unittest.TestCase):
             self.assertNotIn("winsound", src_txt)
             self.assertNotIn("MessageBeep", src_txt)
 
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-        k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-        k32.Process32FirstW.restype = wintypes.BOOL
-        k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-        k32.Process32NextW.restype = wintypes.BOOL
-        k32.CloseHandle.argtypes = [wintypes.HANDLE]
-        k32.CloseHandle.restype = wintypes.BOOL
-        self.assertIsInstance(is_antigravity_running(k32), bool)
+        self.assertIsInstance(is_antigravity_running(), bool)
 
     def test_window_close_and_loading_spinner_transition(self) -> None:
         sig = inspect.signature(GravityPulseApp._hide_tooltip)
@@ -286,7 +275,7 @@ class TestUiAndDaemon(unittest.TestCase):
         self.assertIn("SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)", app_src)
         self.assertIn("iconbitmap(default=str(ICON_PATH))", app_src)
 
-        init_idx = app_src.index("_init_win32_shell()")
+        init_idx = app_src.index("_init_platform_shell()")
         tk_idx = app_src.index("root = tk.Tk()")
         self.assertLess(init_idx, tk_idx)
 

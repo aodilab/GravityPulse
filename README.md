@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_ZH.md)
 
-A lightweight, local-only Windows desktop monitor for **Antigravity 2.0**. It tracks effective coding time, calibrates 7-day / 5-hour rolling quota usage, and monitors per-conversation implicit KV cache warmth so you know when to open a fresh window instead of burning quota on cold recomputation.
+A lightweight, local-only desktop monitor for **Antigravity 2.0** (Windows 10/11 & macOS). It tracks effective coding time, calibrates 7-day / 5-hour rolling quota usage, and monitors per-conversation implicit KV cache warmth so you know when to open a fresh window instead of burning quota on cold recomputation.
 
 > **Disclaimer**: GravityPulse is an unofficial, read-only community tool. It reads local telemetry files under `~/.gemini/antigravity`, requires no API keys, intercepts no network traffic, and uploads nothing. Because Antigravity's internal local storage schema may change in future updates, adjustments may occasionally be needed.
 
@@ -25,30 +25,41 @@ When working heavily with Antigravity 2.0, three questions come up constantly: h
 - **7-Day & 5-Hour Rolling Quota Tracking**: Calibrates against your official quota panel in one dialog, tracks remaining 7-day cycle and 5-hour rolling budgets, and breaks down consumption by model (`Carbon`, `Neon`, `Hydrogen`, `Other`), project, time interval, and day.
 - **Implicit KV Cache & Switch-Window Advisor**: Learns per-model cache survival curves from your local step history, displays cumulative and latest-step cache hit rates, and compares cold-recomputation cost against starting a new conversation before suggesting a switch.
 - **Accurate Active Work Time**: Uses explicit user messages to define session bounds (30-minute idle bridge, extended to 60 minutes while an agent task is actively running, with zero unattended tail after your last prompt), automatically merging subagents and Git worktrees into parent projects.
-- **Subagent-Aware & Non-Intrusive Alerts**: Detects running subagents and non-daemon background tasks to avoid false cold-cache warnings. Switch notifications appear as silent, non-activating bottom-right cards (`WS_EX_NOACTIVATE`) that never steal focus or play system sounds.
-- **Local Incremental Ledger & Tray Residency**: Keeps a local ledger under `data/telemetry_ledger.db` so deleting conversations in Antigravity does not erase historical work time or quota records. Runs quietly in the Windows system tray and auto-starts alongside `Antigravity.exe`.
-- **Bilingual UI (English / 简体中文)**: Automatically matches your Windows UI language on first launch, with instant switching from the top bar (`EN` / `中`) or tray menu.
+- **Subagent-Aware & Non-Intrusive Alerts**: Detects running subagents and non-daemon background tasks to avoid false cold-cache warnings. Switch notifications appear as silent, non-activating bottom-right cards (`WS_EX_NOACTIVATE` on Windows / non-activating floating overlay on macOS) that never steal focus or play system sounds.
+- **Local Incremental Ledger & Tray / Menu Bar Residency**: Keeps a local ledger (`data/telemetry_ledger.db`, or `~/Library/Application Support/GravityPulse/` for the macOS `.app`) so deleting conversations in Antigravity does not erase historical work time or quota records. Runs quietly in the Windows system tray or macOS menu bar and auto-starts alongside Antigravity.
+- **Bilingual UI (English / 简体中文)**: Automatically matches your OS language on first launch, with instant switching from the top bar (`EN` / `中`) or tray / menu bar.
 
 ---
 
 ## Platform & Requirements
 
-- **OS**: Windows 10 / 11 (uses native Win32 tray, non-activating toast windows, and startup registry; macOS/Linux PRs welcome)
-- **Runtime (from source)**: Python 3.11+ (with standard `tkinter`, `sqlite3`, `ctypes`) and `Pillow`
+- **OS**:
+  - **Windows 10 / 11**: Native Win32 system tray, `WS_EX_NOACTIVATE` silent popups, and HKCU startup watcher.
+  - **macOS 12+ (Apple Silicon, Beta)**: Native top menu bar icon (`NSStatusBar`), Retina-scaled UI, non-activating floating alerts, and `LaunchAgent` auto-start.
+- **Runtime (from source)**: Python 3.11+ (standard `tkinter`, `sqlite3`) with `Pillow` (and `pyobjc-framework-Cocoa` on macOS, installed via `requirements.txt`).
 
 ---
 
 ## Quick Start
 
-### Option 1: Portable Windows Release (No Python Required)
+### Option 1: Prebuilt Releases (No Python Required)
 
+**Windows**:
 1. Download `GravityPulse-win64.zip` from the [Releases](../../releases) page.
-2. Extract it to a folder of your choice and double-click `GravityPulse.exe` (because the portable binary is unsigned, Windows SmartScreen may show a prompt on first launch — click **More info → Run anyway**).
-3. Right-click the GravityPulse tray icon to toggle **Auto-start with Antigravity**, **Create Desktop Shortcut**, or switch language — no terminal required.
+2. Extract it to a folder of your choice and double-click `GravityPulse.exe` (because the binary is unsigned, click **More info → Run anyway** if Windows SmartScreen prompts).
+3. Right-click the tray icon to toggle **Auto-start with Antigravity**, **Create Desktop Shortcut**, or switch language.
+
+**macOS (Apple Silicon, Beta)**:
+1. Download `GravityPulse-macos-arm64.dmg` from the [Releases](../../releases) page, open it, and drag **GravityPulse.app** into **Applications**.
+2. Because the open-source `.app` is not notarized with an Apple Developer certificate, clear the quarantine attribute once before the first launch:
+   ```bash
+   xattr -cr /Applications/GravityPulse.app
+   ```
+3. Launch **GravityPulse** from Applications. Click the clock icon in the top macOS menu bar to toggle **Auto-start with Antigravity** (`LaunchAgent`), create a Desktop shortcut, or switch language.
 
 ### Option 2: Run from Source
 
-```powershell
+```bash
 git clone https://github.com/aodilab/GravityPulse.git
 cd GravityPulse
 pip install -r requirements.txt
@@ -56,7 +67,7 @@ pip install -r requirements.txt
 # Launch or focus the GravityPulse dashboard
 python build.py
 
-# Optional: generate icon, Desktop shortcut, and HKCU auto-start companion watcher
+# Optional: generate icons, Desktop shortcut, and auto-start companion watcher
 python build.py --setup
 ```
 
@@ -80,15 +91,15 @@ Click the quota calibration button in the top bar and enter the current remainin
 
 ---
 
-## Build Portable `.exe` Locally
+## Build Locally (`.exe` / `.app`)
 
-```powershell
+```bash
 pip install pyinstaller
 python build.py --icon
 pyinstaller --noconfirm --clean packaging/gravitypulse.spec
 ```
 
-The portable build will be output to `dist/GravityPulse/`.
+Outputs `dist/GravityPulse/` on Windows and `dist/GravityPulse.app` on macOS.
 
 ---
 

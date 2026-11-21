@@ -1,14 +1,24 @@
-"""Multi-size PNG-in-ICO icon generator and Windows Desktop shortcut builder."""
+"""Multi-size PNG-in-ICO / Apple ICNS icon generator and cross-platform Desktop shortcut builder."""
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
 import struct
 import subprocess
 import sys
 import zlib
 
-from config.settings import APP_USER_MODEL_ID, ICON_PATH, IS_FROZEN, PROJECT_ROOT, RUNTIME_ROOT
+from config.settings import (
+    APP_USER_MODEL_ID,
+    ICNS_PATH,
+    ICON_PATH,
+    IS_FROZEN,
+    IS_MACOS,
+    IS_WINDOWS,
+    PROJECT_ROOT,
+    RUNTIME_ROOT,
+)
 from src.core.watcher import BUILD_ENTRY, resolve_pythonw
 
 
@@ -116,6 +126,58 @@ def build_ico(output_path: Path = ICON_PATH) -> Path:
     return output_path
 
 
+def build_icns(output_path: Path = ICNS_PATH) -> Path:
+    """Write multi-resolution Apple PNG-in-ICNS file to `assets/gravitypulse.icns`."""
+    specs = [
+        (b"icp4", 16),
+        (b"icp5", 32),
+        (b"icp6", 64),
+        (b"ic07", 128),
+        (b"ic08", 256),
+        (b"ic09", 512),
+    ]
+    chunks = bytearray()
+    for tag, size in specs:
+        png = _render_icon_png(size)
+        chunks.extend(tag)
+        chunks.extend(struct.pack(">I", 8 + len(png)))
+        chunks.extend(png)
+    header = b"icns" + struct.pack(">I", 8 + len(chunks))
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_bytes(header + bytes(chunks))
+    return output_path
+
+
+def _find_macos_app_bundle(executable: Path | None = None) -> Path | None:
+    cur = (executable or Path(sys.executable)).resolve()
+    for parent in (cur, *cur.parents):
+        if parent.suffix == ".app":
+            return parent
+    return None
+
+
+def _create_macos_desktop_shortcut(desktop_dir: Path | None = None) -> Path:
+    desktop = desktop_dir or (Path.home() / "Desktop")
+    desktop.mkdir(parents=True, exist_ok=True)
+    bundle = _find_macos_app_bundle() if IS_FROZEN else None
+    if bundle is not None:
+        link = desktop / f"{bundle.stem}.app"
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(bundle)
+        return link
+    cmd_path = desktop / "GravityPulse.command"
+    py_exe = str(Path(sys.executable).resolve())
+    script = (
+        "#!/bin/sh\n"
+        f'cd "{PROJECT_ROOT}" || exit 1\n'
+        f'nohup "{py_exe}" "{BUILD_ENTRY}" >/dev/null 2>&1 &\n'
+    )
+    cmd_path.write_text(script, encoding="utf-8")
+    os.chmod(cmd_path, 0o755)
+    return cmd_path
+
+
 def bind_shortcut_app_user_model_id(lnk_path: Path, app_id: str = APP_USER_MODEL_ID) -> bool:
     """Attach `System.AppUserModel.ID` onto a `.lnk` file so Windows Taskbar groups with the running app."""
     if not lnk_path.exists():
@@ -138,7 +200,11 @@ def bind_shortcut_app_user_model_id(lnk_path: Path, app_id: str = APP_USER_MODEL
 
 
 def create_desktop_shortcut() -> Path:
-    """Create or update `GravityPulse.lnk` on the user's Windows Desktop."""
+    """Create or update a GravityPulse Desktop shortcut (`.lnk` on Windows, `.app` symlink / `.command` on macOS)."""
+    if IS_MACOS:
+        return _create_macos_desktop_shortcut()
+    if not IS_WINDOWS:
+        raise RuntimeError("Desktop shortcut creation is supported on Windows and macOS.")
     if not ICON_PATH.exists():
         build_ico(ICON_PATH)
     if IS_FROZEN:

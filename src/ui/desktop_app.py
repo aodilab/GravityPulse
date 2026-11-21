@@ -1,8 +1,7 @@
-"""Resident desktop GravityPulse application controller and single-instance Win32 entrypoint."""
+"""Resident desktop GravityPulse application controller and cross-platform single-instance entrypoint."""
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from datetime import date, datetime, timedelta
 import queue
 import threading
@@ -11,7 +10,7 @@ import tkinter as tk
 
 from config.settings import (
     APP_USER_MODEL_ID, BG_PAGE, DEFAULT_ANTIGRAVITY_DIR, ICON_PATH, IPC_POLL_MS,
-    LOCAL_TZ, MIN_VISIBLE_DATE, MONITOR_MS, REFRESH_MS, SHOW_EVENT_NAME, SINGLETON_MUTEX_NAME,
+    IS_MACOS, IS_WINDOWS, LOCAL_TZ, MIN_VISIBLE_DATE, MONITOR_MS, REFRESH_MS,
 )
 from src.core import (
     QuotaConfig, SwitchAlertTracker, collect_dialog_contexts, compute_day_report,
@@ -19,6 +18,7 @@ from src.core import (
     local_day_bounds, local_week_bounds, report_to_dict, serialize_dialogs,
     sync_telemetry_ledger, week_report_to_dict,
 )
+from src.core.platform_ipc import SingletonIPC
 from src.ui.hero_view import HeroViewMixin
 from src.ui.i18n import load_ui_language, localize_toast, normalize_lang, tr
 from src.ui.layout import LayoutMixin
@@ -27,8 +27,13 @@ from src.ui.modals import ModalMixin
 from src.ui.system_tray import SystemTrayIcon
 from src.ui.table_views import TableViewsMixin
 
+if IS_WINDOWS:
+    from ctypes import wintypes
 
-def _init_win32_shell() -> None:
+
+def _init_platform_shell() -> None:
+    if not IS_WINDOWS:
+        return
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
     except Exception:
@@ -43,14 +48,27 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
     """Native desktop GravityPulse dashboard with tray residency and zero-jump auto-refresh."""
 
     def __init__(
-        self, root: tk.Tk, show_event_handle: int = 0, start_hidden: bool = False, mutex_handle: int = 0, language: str | None = None,
+        self,
+        root: tk.Tk,
+        show_event_handle: int = 0,
+        start_hidden: bool = False,
+        mutex_handle: int = 0,
+        language: str | None = None,
+        ipc: SingletonIPC | None = None,
     ) -> None:
         self.root = root
-        self._show_event_handle = show_event_handle
-        self._mutex_handle = mutex_handle
+        self._ipc: SingletonIPC | None = ipc
+        self._show_event_handle = ipc.show_event_handle if ipc is not None else show_event_handle
+        self._mutex_handle = ipc.mutex_handle if ipc is not None else mutex_handle
         self._lang: str = normalize_lang(language) or load_ui_language()
         self._tray_cmds: "queue.SimpleQueue[str]" = queue.SimpleQueue()
-        self.scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
+        if IS_MACOS:
+            from src.ui.macos_tray import configure_macos_root
+
+            configure_macos_root(self)
+            self.scale = 1.0
+        else:
+            self.scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
 
         self.win_w = self.px(960)
         self.win_h = self.px(764)
@@ -62,7 +80,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self.root.resizable(False, False)
         self.root.configure(bg=BG_PAGE)
 
-        if ICON_PATH.exists():
+        if IS_WINDOWS and ICON_PATH.exists():
             try:
                 self.root.iconbitmap(default=str(ICON_PATH))
             except tk.TclError:
@@ -101,9 +119,11 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._loading_min_until: float = 0.0
         self._spinner_step: int = 0
 
-        self._k32_ipc = ctypes.WinDLL("kernel32", use_last_error=True)
-        self._k32_ipc.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-        self._k32_ipc.WaitForSingleObject.restype = wintypes.DWORD
+        self._k32_ipc = None
+        if IS_WINDOWS and self._ipc is None:
+            self._k32_ipc = ctypes.WinDLL("kernel32", use_last_error=True)
+            self._k32_ipc.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            self._k32_ipc.WaitForSingleObject.restype = wintypes.DWORD
 
         self._widget_cache: dict[tuple[int, str], object] = {}
         self._canvas_item_cache: dict[tuple[int, int, str], object] = {}
@@ -121,7 +141,8 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._hover_row_idx: int = -1
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close_to_tray)
-        self.root.bind("<Alt-F4>", lambda _e: self._on_close_to_tray())
+        if not IS_MACOS:
+            self.root.bind("<Alt-F4>", lambda _e: self._on_close_to_tray())
 
         self._build_ui()
         self._center_window()
@@ -370,11 +391,15 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             self._show_switch_toast(head, detail)
 
     def show_window(self) -> None:
-        """Restore resident window from system tray with smooth spinner + fade transition."""
+        """Restore resident window from system tray / menu bar with smooth spinner + fade transition."""
         if self._hot_reload_if_code_updated(show_ui=True):
             return
         if not self._window_visible:
             self._present_window_with_loading(min_ms=300)
+            if IS_MACOS:
+                from src.ui.macos_tray import activate_macos_app
+
+                activate_macos_app()
             self.refresh(force_recompute=True, schedule_next=True)
             return
         try:
@@ -382,9 +407,14 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             self.root.deiconify()
             self.root.state("normal")
             self.root.lift()
-            self.root.attributes("-topmost", True)
-            self._cancel_after("_topmost_after_id")
-            self._topmost_after_id = self.root.after(140, self._clear_topmost_safe)
+            if IS_MACOS:
+                from src.ui.macos_tray import activate_macos_app
+
+                activate_macos_app()
+            else:
+                self.root.attributes("-topmost", True)
+                self._cancel_after("_topmost_after_id")
+                self._topmost_after_id = self.root.after(140, self._clear_topmost_safe)
             self.root.focus_force()
         except Exception:
             pass
@@ -394,7 +424,10 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._ipc_after_id = self.root.after(IPC_POLL_MS, self._poll_ipc_and_tray)
 
     def _poll_ipc_and_tray(self) -> None:
-        if self._show_event_handle:
+        if self._ipc is not None:
+            if self._ipc.poll_show_signal():
+                self.show_window()
+        elif IS_WINDOWS and self._show_event_handle and self._k32_ipc is not None:
             try:
                 if self._k32_ipc.WaitForSingleObject(self._show_event_handle, 0) == 0:
                     self.show_window()
@@ -465,41 +498,20 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
 
 def launch_desktop_app(args: set[str] | None = None) -> None:
     """Start single-instance GravityPulse desktop UI or signal existing instance to show."""
-    _init_win32_shell()
+    _init_platform_shell()
     arg_set = {a.lower() for a in (args or set())}
     is_bg_autostart = "--background" in arg_set
     start_hidden = is_bg_autostart or "--minimized" in arg_set or "--tray" in arg_set
 
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateEventW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.BOOL, wintypes.LPCWSTR]
-    k32.CreateEventW.restype = wintypes.HANDLE
-    k32.SetEvent.argtypes = [wintypes.HANDLE]
-    k32.SetEvent.restype = wintypes.BOOL
-    k32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-    k32.CreateMutexW.restype = wintypes.HANDLE
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-    k32.CloseHandle.restype = wintypes.BOOL
-
-    show_event = k32.CreateEventW(None, False, False, SHOW_EVENT_NAME)
-    mutex_handle = k32.CreateMutexW(None, False, SINGLETON_MUTEX_NAME)
-    already_running = ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
-
-    if already_running:
-        if show_event and not is_bg_autostart and not start_hidden:
-            k32.SetEvent(show_event)
-        if mutex_handle:
-            k32.CloseHandle(mutex_handle)
-        if show_event:
-            k32.CloseHandle(show_event)
+    ipc = SingletonIPC("app", with_show_signal=True)
+    if not ipc.acquire(signal_if_running=(not is_bg_autostart and not start_hidden)):
         return
 
     root = tk.Tk()
     root.withdraw()
-    app = GravityPulseApp(
-        root, show_event_handle=int(show_event or 0), start_hidden=start_hidden, mutex_handle=int(mutex_handle or 0),
-    )
+    app = GravityPulseApp(root, start_hidden=start_hidden, ipc=ipc)
     try:
         root.mainloop()
     finally:
-        if app._mutex_handle:
-            k32.CloseHandle(app._mutex_handle)
+        if app._ipc is not None:
+            app._ipc.release()

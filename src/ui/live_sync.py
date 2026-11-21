@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from datetime import datetime
 import subprocess
 import threading
@@ -11,6 +10,7 @@ import time
 from config.settings import (
     DEFAULT_ANTIGRAVITY_DIR,
     IS_FROZEN,
+    IS_WINDOWS,
     LIVE_SYNC_MS,
     LIVE_TICK_MS,
     LOCAL_TZ,
@@ -25,6 +25,9 @@ from src.core import (
 )
 from src.core.watcher import resolve_launch_command
 from src.ui.i18n import localize_duration, tr
+
+if IS_WINDOWS:
+    from ctypes import wintypes
 
 _DETACHED_PROCESS = 0x00000008
 _CREATE_NO_WINDOW = 0x08000000
@@ -46,27 +49,45 @@ class LiveSyncMixin:
         """Restart resident process seamlessly if on-disk `.py` files changed after launch."""
         if IS_FROZEN or self._restarting:
             return bool(self._restarting)
+        ipc = getattr(self, "_ipc", None)
         mutex_h = int(getattr(self, "_mutex_handle", 0) or 0)
-        if not mutex_h or compute_source_mtime_ns(PROJECT_ROOT) <= self._startup_code_mtime:
+        has_lock = (ipc is not None and ipc.is_owned) or bool(mutex_h)
+        if not has_lock or compute_source_mtime_ns(PROJECT_ROOT) <= self._startup_code_mtime:
             return False
         self._restarting = True
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        k32.CloseHandle.argtypes = [wintypes.HANDLE]
-        k32.CloseHandle.restype = wintypes.BOOL
-        self._mutex_handle = 0
-        k32.CloseHandle(mutex_h)
-        ev_h = int(getattr(self, "_show_event_handle", 0) or 0)
-        if ev_h:
+        if ipc is not None:
+            ipc.release()
+            self._mutex_handle = 0
             self._show_event_handle = 0
-            k32.CloseHandle(ev_h)
+        elif IS_WINDOWS and mutex_h:
+            k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            k32.CloseHandle.argtypes = [wintypes.HANDLE]
+            k32.CloseHandle.restype = wintypes.BOOL
+            self._mutex_handle = 0
+            k32.CloseHandle(mutex_h)
+            ev_h = int(getattr(self, "_show_event_handle", 0) or 0)
+            if ev_h:
+                self._show_event_handle = 0
+                k32.CloseHandle(ev_h)
         cmd = resolve_launch_command(None if show_ui else "--background")
         try:
-            subprocess.Popen(
-                cmd,
-                cwd=str(RUNTIME_ROOT),
-                creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
-                close_fds=True,
-            )
+            if IS_WINDOWS:
+                subprocess.Popen(
+                    cmd,
+                    cwd=str(RUNTIME_ROOT),
+                    creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
+                    close_fds=True,
+                )
+            else:
+                subprocess.Popen(
+                    cmd,
+                    cwd=str(RUNTIME_ROOT),
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    start_new_session=True,
+                    close_fds=True,
+                )
         except OSError:
             pass
         self._quit_completely()

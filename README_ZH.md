@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README_ZH.md)
 
-面向 **Antigravity 2.0** 的 Windows 本地桌面监控，查看有效工时、双滚动额度和隐式 KV 缓存状态。
+面向 **Antigravity 2.0** 的桌面监控（Windows / macOS），查看有效工时、双滚动额度和 KV 缓存状态。
 
 高频使用时，很难直观判断 7 天和 5 小时额度还剩多少，也难看出旧对话缓存有没有失效。GravityPulse 只读本地数据库与日志，不填 API Key，不上传数据。
 
@@ -24,22 +24,32 @@
 
 ## 支持平台与运行边界
 
-- **操作系统**：当前仅支持 Windows 10 / 11（托盘、无焦点提醒与伴随自启依赖 Win32 API，欢迎社区提交 macOS / Linux 适配 PR）。
-- **源码环境**：Python 3.11+（标准库 `tkinter`、`sqlite3`、`ctypes`），第三方依赖仅 `Pillow`。
+- **Windows 10 / 11**：原生系统托盘、无焦点静音提醒（`WS_EX_NOACTIVATE`）、HKCU 伴随自启。
+- **macOS 12+（Apple Silicon，Beta）**：原生顶部菜单栏图标（`NSStatusBar`）、Retina 高分屏适配、无焦点浮动提醒、`LaunchAgent` 伴随自启。
+- **源码环境**：Python 3.11+（标准库 `tkinter`、`sqlite3`），依赖 `Pillow`（macOS 额外安装 `pyobjc-framework-Cocoa`，均已写入 `requirements.txt`）。
 
 ---
 
 ## 快速开始
 
-### 方式一：下载绿色版（免配 Python）
+### 方式一：下载安装包（免配 Python）
 
-1. 前往 [Releases](../../releases) 页面下载最新的 `GravityPulse-win64.zip`。
-2. 解压到任意目录，双击运行 `GravityPulse.exe`（未签名绿色包首次启动若触发 Windows SmartScreen 提示，点「更多信息 → 仍要运行」即可）。
-3. 界面会按 Windows 系统语言自动显示中文或英文；如需切换语言、开启「跟随 Antigravity 开机自启」或「创建桌面快捷方式」，直接右键系统托盘图标操作，无需命令行。
+**Windows**：
+1. 前往 [Releases](../../releases) 下载 `GravityPulse-win64.zip`。
+2. 解压后双击 `GravityPulse.exe`（未签名包首次启动若出现 SmartScreen 提示，点「更多信息 → 仍要运行」）。
+3. 右键系统托盘图标可开关「跟随 Antigravity 开机自启」、创建桌面快捷方式或切换中英文。
+
+**macOS（Apple Silicon，Beta）**：
+1. 前往 [Releases](../../releases) 下载 `GravityPulse-macos-arm64.dmg`，打开后将 `GravityPulse.app` 拖入「应用程序（Applications）」。
+2. 因开源包未做 Apple 开发者公证，首次打开前在终端执行一次隔离标记清理：
+   ```bash
+   xattr -cr /Applications/GravityPulse.app
+   ```
+3. 启动后点击顶部菜单栏时钟图标，即可配置伴随自启（`LaunchAgent`）、创建桌面快捷方式或切换中英文。
 
 ### 方式二：源码运行
 
-```powershell
+```bash
 git clone https://github.com/aodilab/GravityPulse.git
 cd GravityPulse
 pip install -r requirements.txt
@@ -71,18 +81,18 @@ python build.py --setup
 
 ---
 
-## 本地打包便携版 `.exe`
+## 本地打包（`.exe` / `.app`）
 
-```powershell
+```bash
 pip install pyinstaller
 python build.py --icon
 pyinstaller --noconfirm --clean packaging/gravitypulse.spec
 ```
 
-构建完成后，便携版程序位于 `dist/GravityPulse/` 目录。
+Windows 输出至 `dist/GravityPulse/`，macOS 输出至 `dist/GravityPulse.app`。
 
 ---
 
 ## 隐私与协议
 
-所有数据均在本地只读解析，运行期配置与账本仅写入程序目录下的 `data/` 文件夹，无任何外网请求。本项目基于 [MIT License](LICENSE) 开源。
+所有数据均在本地只读解析，运行期配置与账本仅保存在本地（Windows 位于程序目录 `data/`，macOS `.app` 位于 `~/Library/Application Support/GravityPulse/`），无任何外网请求。本项目基于 [MIT License](LICENSE) 开源。

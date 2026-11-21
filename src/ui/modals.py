@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from datetime import datetime
 import threading
 import tkinter as tk
@@ -18,10 +17,15 @@ from config.settings import (
     INK,
     INK_2,
     INK_3,
+    IS_MACOS,
+    IS_WINDOWS,
     LINE_HEX,
     NEON_INPUT_PER_M,
     TOAST_DURATION_MS,
 )
+
+if IS_WINDOWS:
+    from ctypes import wintypes
 from src.core.models import QuotaConfig
 from src.core.quota import (
     compute_quota_summary,
@@ -143,7 +147,7 @@ class ModalMixin:
         win.title(tr("calib_win_title", self._lang))
         win.configure(bg=BG_PAGE)
         win.resizable(False, False)
-        if ICON_PATH.exists():
+        if IS_WINDOWS and ICON_PATH.exists():
             try:
                 win.iconbitmap(str(ICON_PATH))
             except tk.TclError:
@@ -399,39 +403,55 @@ class ModalMixin:
 
         work_r = self.root.winfo_screenwidth()
         work_b = self.root.winfo_screenheight() - self.px(48)
-        try:
-            rect = wintypes.RECT()
-            if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
-                work_r, work_b = rect.right, rect.bottom
-        except Exception:
-            pass
+        if IS_WINDOWS:
+            try:
+                rect = wintypes.RECT()
+                if ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+                    work_r, work_b = rect.right, rect.bottom
+            except Exception:
+                pass
+        elif IS_MACOS:
+            from src.ui.macos_tray import get_macos_visible_frame
+
+            vis = get_macos_visible_frame()
+            if vis is not None:
+                _, _, work_r, work_b = vis
 
         pos_x = max(8, work_r - toast_w - self.px(18))
         pos_y = max(8, work_b - req_h - self.px(18))
         tw.geometry(f"{toast_w}x{req_h}+{pos_x}+{pos_y}")
 
         shown_noactivate = False
-        try:
-            u32 = ctypes.windll.user32
-            u32.GetParent.argtypes = [wintypes.HWND]
-            u32.GetParent.restype = wintypes.HWND
-            u32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
-            u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
-            u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
-            u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
-            u32.SetWindowPos.argtypes = [
-                wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint
-            ]
-            u32.SetWindowPos.restype = wintypes.BOOL
+        if IS_WINDOWS:
+            try:
+                u32 = ctypes.windll.user32
+                u32.GetParent.argtypes = [wintypes.HWND]
+                u32.GetParent.restype = wintypes.HWND
+                u32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
+                u32.GetWindowLongPtrW.restype = ctypes.c_ssize_t
+                u32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+                u32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
+                u32.SetWindowPos.argtypes = [
+                    wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint
+                ]
+                u32.SetWindowPos.restype = wintypes.BOOL
 
-            hwnd = u32.GetParent(tw.winfo_id()) or tw.winfo_id()
-            ex_style = u32.GetWindowLongPtrW(hwnd, -20)
-            u32.SetWindowLongPtrW(hwnd, -20, ex_style | 0x08000088)
-            tw.deiconify()
-            u32.SetWindowPos(hwnd, wintypes.HWND(-1), pos_x, pos_y, toast_w, req_h, 0x0050)
-            shown_noactivate = True
-        except Exception:
-            pass
+                hwnd = u32.GetParent(tw.winfo_id()) or tw.winfo_id()
+                ex_style = u32.GetWindowLongPtrW(hwnd, -20)
+                u32.SetWindowLongPtrW(hwnd, -20, ex_style | 0x08000088)
+                tw.deiconify()
+                u32.SetWindowPos(hwnd, wintypes.HWND(-1), pos_x, pos_y, toast_w, req_h, 0x0050)
+                shown_noactivate = True
+            except Exception:
+                pass
+        elif IS_MACOS:
+            try:
+                tw.tk.call("::tk::unsupported::MacWindowStyle", "style", tw._w, "help", "noActivates")
+                tw.deiconify()
+                tw.attributes("-topmost", True)
+                shown_noactivate = True
+            except Exception:
+                pass
 
         if not shown_noactivate:
             tw.deiconify()

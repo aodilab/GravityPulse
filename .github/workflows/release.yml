@@ -21,7 +21,7 @@ jobs:
         run: |
           pip install -r requirements.txt
           pip install pyinstaller
-      - name: Generate icon and run audit
+      - name: Generate icons and run audit
         run: |
           python build.py --icon
           python build.py --audit
@@ -30,14 +30,54 @@ jobs:
       - name: Archive portable zip
         shell: pwsh
         run: Compress-Archive -Path dist/GravityPulse -DestinationPath GravityPulse-win64.zip -Force
-      - name: Upload artifact
+      - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: GravityPulse-win64
           path: GravityPulse-win64.zip
+
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install build dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install pyinstaller
+      - name: Generate icons and run audit
+        run: |
+          python build.py --icon
+          python build.py --audit
+      - name: Build macOS .app bundle
+        run: pyinstaller --noconfirm --clean packaging/gravitypulse.spec
+      - name: Create macOS DMG image
+        run: |
+          mkdir -p dmg_stage
+          cp -R dist/GravityPulse.app dmg_stage/
+          ln -s /Applications dmg_stage/Applications
+          hdiutil create -volname "GravityPulse" -srcfolder dmg_stage -ov -format UDZO GravityPulse-macos-arm64.dmg
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GravityPulse-macos-arm64
+          path: GravityPulse-macos-arm64.dmg
+
+  publish-release:
+    needs: [build-windows, build-macos]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: GravityPulse-win64.zip
+          files: |
+            release-assets/GravityPulse-win64.zip
+            release-assets/GravityPulse-macos-arm64.dmg
           generate_release_notes: true

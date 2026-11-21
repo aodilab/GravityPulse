@@ -218,18 +218,28 @@ class TestLiveSyncAndIncrementalWal(unittest.TestCase):
                 mock_refresh.assert_not_called()
                 self.assertEqual(ui._last_telemetry_fp, ("fp3",))
 
-                # Stale source-code detection triggers clean hot-reload on wake when mutex_handle != 0
+                # Stale source-code detection triggers clean hot-reload on wake when singleton lock is held
                 self.assertGreater(compute_source_mtime_ns(Path(__file__).resolve().parent.parent), 0)
-                ui._mutex_handle = 999
                 ui._startup_code_mtime -= 1
-                with (
-                    mock.patch("src.ui.live_sync.ctypes.WinDLL") as mock_dll,
-                    mock.patch("src.ui.live_sync.subprocess.Popen") as mock_popen,
-                ):
-                    self.assertTrue(ui._hot_reload_if_code_updated(show_ui=True))
-                    self.assertEqual(ui._mutex_handle, 0)
-                    mock_dll.return_value.CloseHandle.assert_called_once_with(999)
-                    mock_popen.assert_called_once()
+                from config.settings import IS_WINDOWS
+
+                if IS_WINDOWS:
+                    ui._mutex_handle = 999
+                    with (
+                        mock.patch("src.ui.live_sync.ctypes.WinDLL") as mock_dll,
+                        mock.patch("src.ui.live_sync.subprocess.Popen") as mock_popen,
+                    ):
+                        self.assertTrue(ui._hot_reload_if_code_updated(show_ui=True))
+                        self.assertEqual(ui._mutex_handle, 0)
+                        mock_dll.return_value.CloseHandle.assert_called_once_with(999)
+                        mock_popen.assert_called_once()
+                else:
+                    fake_ipc = mock.Mock(is_owned=True)
+                    ui._ipc = fake_ipc
+                    with mock.patch("src.ui.live_sync.subprocess.Popen") as mock_popen:
+                        self.assertTrue(ui._hot_reload_if_code_updated(show_ui=True))
+                        fake_ipc.release.assert_called_once()
+                        mock_popen.assert_called_once()
         finally:
             try:
                 root.destroy()

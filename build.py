@@ -18,13 +18,13 @@ def main() -> int:
         print(
             "Usage: python build.py [option]\n"
             "  (no args)            Launch or focus the GravityPulse desktop window\n"
-            "  --background         Start resident tray app hidden in background\n"
+            "  --background         Start resident tray/menu-bar app hidden in background\n"
             "  --watch              Run singleton Antigravity 2.0 companion watcher\n"
-            "  --setup              Generate icon, Desktop shortcut, and HKCU startup entry\n"
-            "  --icon               Regenerate assets/gravitypulse.ico\n"
-            "  --shortcut           Create/update Desktop GravityPulse.lnk\n"
-            "  --install-startup    Register companion watcher in Windows HKCU Run\n"
-            "  --uninstall-startup  Remove companion watcher from Windows HKCU Run\n"
+            "  --setup              Generate icons, Desktop shortcut, and auto-start entry\n"
+            "  --icon               Regenerate assets/gravitypulse.ico and .icns\n"
+            "  --shortcut           Create/update Desktop shortcut\n"
+            "  --install-startup    Register companion watcher auto-start (HKCU Run / LaunchAgent)\n"
+            "  --uninstall-startup  Remove companion watcher auto-start entry\n"
             "  --test               Run unit test suite\n"
             "  --audit              Run line-limit check, syntax check, and unit tests"
         )
@@ -47,10 +47,11 @@ def main() -> int:
         return 0 if run_unit_tests(verbosity=2) else 1
 
     if "--icon" in arg_set:
-        from scripts.icon_builder import build_ico
+        from scripts.icon_builder import build_icns, build_ico
 
-        out = build_ico()
-        print(f"Generated icon: {out}")
+        ico = build_ico()
+        icns = build_icns()
+        print(f"Generated icons:\n  {ico}\n  {icns}")
         return 0
 
     if "--shortcut" in arg_set:
@@ -75,13 +76,14 @@ def main() -> int:
         return 0
 
     if "--setup" in arg_set:
-        from scripts.icon_builder import build_ico, create_desktop_shortcut
+        from config.settings import IS_MACOS
+        from scripts.icon_builder import build_icns, build_ico, create_desktop_shortcut
         from src.core.watcher import install_startup_registry
 
-        ico = build_ico()
+        icon = build_icns() if IS_MACOS else build_ico()
         lnk = create_desktop_shortcut()
         reg_cmd = install_startup_registry()
-        print(f"Icon:     {ico}\nShortcut: {lnk}\nStartup:  {reg_cmd}")
+        print(f"Icon:     {icon}\nShortcut: {lnk}\nStartup:  {reg_cmd}")
         return 0
 
     from src.ui.desktop_app import launch_desktop_app

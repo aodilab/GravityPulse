@@ -1,54 +1,64 @@
-"""Companion daemon binding GravityPulse resident monitoring to Antigravity 2.0 startup."""
+"""Companion daemon binding GravityPulse resident monitoring to Antigravity 2.0 startup (Windows & macOS)."""
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
+import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 import time
-import winreg
 
 from config.settings import (
     IS_FROZEN,
+    IS_MACOS,
+    IS_WINDOWS,
+    MACOS_LAUNCH_AGENT_LABEL,
+    MACOS_LAUNCH_AGENT_PLIST,
     PROJECT_ROOT,
     RUN_REG_PATH,
     RUN_REG_VALUE_NAME,
     RUNTIME_ROOT,
     SINGLETON_MUTEX_NAME,
     TARGET_EXE_NAMES,
-    WATCHER_MUTEX_NAME,
+    TARGET_MACOS_NAMES,
     WATCHER_POLL_SEC,
 )
 from src.core.live_state import compute_source_mtime_ns
+from src.core.platform_ipc import SingletonIPC, is_named_lock_held, spawn_detached
 
 BUILD_ENTRY = PROJECT_ROOT / "build.py"
 
 _TH32CS_SNAPPROCESS = 0x00000002
 _INVALID_HANDLE_VALUE = ctypes.c_void_p(-1).value
 _SYNCHRONIZE = 0x00100000
-_DETACHED_PROCESS = 0x00000008
-_CREATE_NO_WINDOW = 0x08000000
 
+if IS_WINDOWS:
+    from ctypes import wintypes
+    import winreg
 
-class PROCESSENTRY32W(ctypes.Structure):
-    _fields_ = [
-        ("dwSize", wintypes.DWORD),
-        ("cntUsage", wintypes.DWORD),
-        ("th32ProcessID", wintypes.DWORD),
-        ("th32DefaultHeapID", ctypes.c_size_t),
-        ("th32ModuleID", wintypes.DWORD),
-        ("cntThreads", wintypes.DWORD),
-        ("th32ParentProcessID", wintypes.DWORD),
-        ("pcPriClassBase", wintypes.LONG),
-        ("dwFlags", wintypes.DWORD),
-        ("szExeFile", wintypes.WCHAR * 260),
-    ]
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.c_size_t),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+else:
+    PROCESSENTRY32W = None  # type: ignore[assignment,misc]
 
 
 def resolve_pythonw() -> str:
-    """Resolve `pythonw.exe` next to the active interpreter so background processes create zero console windows."""
+    """Resolve `pythonw.exe` on Windows (or active Python executable on macOS/POSIX)."""
     exe = Path(sys.executable)
+    if not IS_WINDOWS:
+        return str(exe)
     if exe.name.lower() == "pythonw.exe" and exe.exists():
         return str(exe)
     cand = exe.with_name("pythonw.exe")
@@ -67,13 +77,43 @@ def resolve_launch_command(flag: str | None = None, *, frozen: bool | None = Non
 
 
 def resolve_startup_command(*, frozen: bool | None = None) -> str:
-    """Build HKCU Run command string for companion watcher startup."""
+    """Build startup command string for Windows HKCU Run (or display summary on macOS)."""
     argv = resolve_launch_command("--watch", frozen=frozen)
     return " ".join(f'"{part}"' if not part.startswith("--") else part for part in argv)
 
 
-def is_antigravity_running(k32: ctypes.WinDLL) -> bool:
-    """Return True if `Antigravity.exe` is currently running."""
+def build_macos_launch_agent_plist(
+    argv: list[str] | None = None,
+    cwd: Path | str | None = None,
+    label: str = MACOS_LAUNCH_AGENT_LABEL,
+) -> dict[str, object]:
+    """Build a standard macOS LaunchAgent property list dict for the companion watcher."""
+    return {
+        "Label": label,
+        "ProgramArguments": list(argv) if argv is not None else resolve_launch_command("--watch"),
+        "RunAtLoad": True,
+        "KeepAlive": False,
+        "WorkingDirectory": str(cwd if cwd is not None else RUNTIME_ROOT),
+        "ProcessType": "Background",
+    }
+
+
+def is_antigravity_process_output(ps_stdout: str) -> bool:
+    """Parse `ps -Ax -o comm=` output and return True if an Antigravity desktop process is running."""
+    for raw in ps_stdout.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        low = line.lower()
+        if "gravitypulse" in low:
+            continue
+        base = Path(line).name.lower()
+        if base in TARGET_MACOS_NAMES or "antigravity.app/contents/macos/antigravity" in low:
+            return True
+    return False
+
+
+def _is_antigravity_running_win32(k32: ctypes.WinDLL) -> bool:
     snap = k32.CreateToolhelp32Snapshot(_TH32CS_SNAPPROCESS, 0)
     if not snap or snap == _INVALID_HANDLE_VALUE:
         return False
@@ -92,55 +132,111 @@ def is_antigravity_running(k32: ctypes.WinDLL) -> bool:
         k32.CloseHandle(snap)
 
 
-def is_app_running(k32: ctypes.WinDLL) -> bool:
-    """Return True if the resident GravityPulse UI process holds `SINGLETON_MUTEX_NAME`."""
-    h = k32.OpenMutexW(_SYNCHRONIZE, False, SINGLETON_MUTEX_NAME)
-    if h:
-        k32.CloseHandle(h)
-        return True
+def is_antigravity_running(k32: object | None = None) -> bool:
+    """Return True if Antigravity is currently running on Windows or macOS."""
+    if IS_WINDOWS:
+        dll = k32
+        if dll is None:
+            dll = ctypes.WinDLL("kernel32", use_last_error=True)
+            dll.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+            dll.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+            dll.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+            dll.Process32FirstW.restype = wintypes.BOOL
+            dll.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+            dll.Process32NextW.restype = wintypes.BOOL
+            dll.CloseHandle.argtypes = [wintypes.HANDLE]
+            dll.CloseHandle.restype = wintypes.BOOL
+        return _is_antigravity_running_win32(dll)  # type: ignore[arg-type]
+
+    try:
+        res = subprocess.run(["ps", "-Ax", "-o", "comm="], capture_output=True, text=True, timeout=3)
+        if res.returncode == 0:
+            return is_antigravity_process_output(res.stdout)
+    except (OSError, subprocess.SubprocessError):
+        pass
     return False
+
+
+def is_app_running(k32: object | None = None) -> bool:
+    """Return True if the resident GravityPulse UI process holds the app singleton lock."""
+    if IS_WINDOWS and k32 is not None:
+        h = k32.OpenMutexW(_SYNCHRONIZE, False, SINGLETON_MUTEX_NAME)  # type: ignore[attr-defined]
+        if h:
+            k32.CloseHandle(h)  # type: ignore[attr-defined]
+            return True
+        return False
+    return is_named_lock_held("app")
 
 
 def launch_resident_app() -> None:
     """Spawn resident GravityPulse in `--background` mode without console window."""
     if not IS_FROZEN and not BUILD_ENTRY.exists():
         return
-    try:
-        subprocess.Popen(
-            resolve_launch_command("--background"),
-            cwd=str(RUNTIME_ROOT),
-            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
-            close_fds=True,
-        )
-    except OSError:
-        pass
+    spawn_detached(resolve_launch_command("--background"), RUNTIME_ROOT)
 
 
-def is_startup_installed() -> bool:
-    """Return True if `GravityPulseWatcher` is currently registered under HKCU Run."""
+def _run_launchctl(args: list[str]) -> bool:
     try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_READ) as key:
-            val, _ = winreg.QueryValueEx(key, RUN_REG_VALUE_NAME)
-            return bool(str(val).strip())
-    except OSError:
+        res = subprocess.run(["launchctl", *args], capture_output=True, text=True, timeout=5)
+        return res.returncode == 0
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
-def is_watcher_running() -> bool:
-    """Return True if a companion watcher instance already holds `WATCHER_MUTEX_NAME`."""
+def install_macos_launch_agent(
+    plist_path: Path = MACOS_LAUNCH_AGENT_PLIST,
+    *,
+    argv: list[str] | None = None,
+    load_agent: bool = True,
+) -> Path:
+    """Write and optionally bootstrap the macOS LaunchAgent plist for auto-start at login."""
+    plist_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = build_macos_launch_agent_plist(argv=argv)
+    with plist_path.open("wb") as fh:
+        plistlib.dump(payload, fh, sort_keys=True)
+    if load_agent and IS_MACOS:
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        domain = f"gui/{uid}"
+        _run_launchctl(["bootout", domain, str(plist_path)])
+        if not _run_launchctl(["bootstrap", domain, str(plist_path)]):
+            _run_launchctl(["load", "-w", str(plist_path)])
+    return plist_path
+
+
+def uninstall_macos_launch_agent(
+    plist_path: Path = MACOS_LAUNCH_AGENT_PLIST,
+    *,
+    unload_agent: bool = True,
+) -> None:
+    """Unload and remove the macOS LaunchAgent plist."""
+    if unload_agent and IS_MACOS and plist_path.exists():
+        uid = os.getuid() if hasattr(os, "getuid") else 0
+        domain = f"gui/{uid}"
+        if not _run_launchctl(["bootout", domain, str(plist_path)]):
+            _run_launchctl(["unload", "-w", str(plist_path)])
     try:
-        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        k32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
-        k32.OpenMutexW.restype = wintypes.HANDLE
-        k32.CloseHandle.argtypes = [wintypes.HANDLE]
-        k32.CloseHandle.restype = wintypes.BOOL
-        h = k32.OpenMutexW(_SYNCHRONIZE, False, WATCHER_MUTEX_NAME)
-        if h:
-            k32.CloseHandle(h)
-            return True
-    except Exception:
+        plist_path.unlink(missing_ok=True)
+    except OSError:
         pass
+
+
+def is_startup_installed(plist_path: Path = MACOS_LAUNCH_AGENT_PLIST) -> bool:
+    """Return True if companion watcher auto-start is currently registered."""
+    if IS_WINDOWS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_READ) as key:
+                val, _ = winreg.QueryValueEx(key, RUN_REG_VALUE_NAME)
+                return bool(str(val).strip())
+        except OSError:
+            return False
+    if IS_MACOS:
+        return plist_path.is_file()
     return False
+
+
+def is_watcher_running() -> bool:
+    """Return True if a companion watcher instance already holds the watcher lock."""
+    return is_named_lock_held("watcher")
 
 
 def ensure_watcher_running() -> bool:
@@ -149,74 +245,61 @@ def ensure_watcher_running() -> bool:
         return False
     if not IS_FROZEN and not BUILD_ENTRY.exists():
         return False
-    try:
-        subprocess.Popen(
-            resolve_launch_command("--watch"),
-            cwd=str(RUNTIME_ROOT),
-            creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
-            close_fds=True,
-        )
-        return True
-    except OSError:
-        return False
+    return spawn_detached(resolve_launch_command("--watch"), RUNTIME_ROOT)
 
 
 def install_startup_registry() -> str:
-    """Register companion watcher under HKCU Run so Antigravity launches auto-start GravityPulse."""
-    cmd = resolve_startup_command()
-    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
-        winreg.SetValueEx(key, RUN_REG_VALUE_NAME, 0, winreg.REG_SZ, cmd)
-    return cmd
+    """Register companion watcher auto-start (HKCU Run on Windows, LaunchAgent on macOS)."""
+    if IS_WINDOWS:
+        cmd = resolve_startup_command()
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            winreg.SetValueEx(key, RUN_REG_VALUE_NAME, 0, winreg.REG_SZ, cmd)
+        return cmd
+    if IS_MACOS:
+        return str(install_macos_launch_agent())
+    raise RuntimeError("Auto-start registration is supported on Windows and macOS.")
 
 
 def uninstall_startup_registry() -> None:
-    """Remove `GravityPulseWatcher` from HKCU Run."""
-    try:
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
-            winreg.DeleteValue(key, RUN_REG_VALUE_NAME)
-    except FileNotFoundError:
-        pass
+    """Remove companion watcher auto-start (HKCU Run on Windows, LaunchAgent on macOS)."""
+    if IS_WINDOWS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_REG_PATH, 0, winreg.KEY_SET_VALUE) as key:
+                winreg.DeleteValue(key, RUN_REG_VALUE_NAME)
+        except FileNotFoundError:
+            pass
+        return
+    if IS_MACOS:
+        uninstall_macos_launch_agent()
 
 
 def run_watcher_loop() -> None:
-    """Run singleton companion watcher polling `Antigravity.exe` startup transitions."""
-    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    k32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
-    k32.CreateMutexW.restype = wintypes.HANDLE
-    k32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
-    k32.OpenMutexW.restype = wintypes.HANDLE
-    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
-    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
-    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32FirstW.restype = wintypes.BOOL
-    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
-    k32.Process32NextW.restype = wintypes.BOOL
-    k32.CloseHandle.argtypes = [wintypes.HANDLE]
-    k32.CloseHandle.restype = wintypes.BOOL
-
-    watcher_mutex = k32.CreateMutexW(None, False, WATCHER_MUTEX_NAME)
-    if ctypes.get_last_error() == 183:
-        if watcher_mutex:
-            k32.CloseHandle(watcher_mutex)
+    """Run singleton companion watcher polling Antigravity startup transitions."""
+    ipc = SingletonIPC("watcher", with_show_signal=False)
+    if not ipc.acquire(signal_if_running=False):
         return
+
+    k32 = None
+    if IS_WINDOWS:
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.OpenMutexW.restype = wintypes.HANDLE
+        k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        k32.Process32FirstW.restype = wintypes.BOOL
+        k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        k32.Process32NextW.restype = wintypes.BOOL
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
 
     startup_mtime = 0 if IS_FROZEN else compute_source_mtime_ns(PROJECT_ROOT)
     ag_was_running = False
     try:
         while True:
             if not IS_FROZEN and BUILD_ENTRY.exists() and compute_source_mtime_ns(PROJECT_ROOT) > startup_mtime:
-                if watcher_mutex:
-                    k32.CloseHandle(watcher_mutex)
-                    watcher_mutex = 0
-                try:
-                    subprocess.Popen(
-                        resolve_launch_command("--watch"),
-                        cwd=str(RUNTIME_ROOT),
-                        creationflags=_DETACHED_PROCESS | _CREATE_NO_WINDOW,
-                        close_fds=True,
-                    )
-                except OSError:
-                    pass
+                ipc.release()
+                spawn_detached(resolve_launch_command("--watch"), RUNTIME_ROOT)
                 return
             ag_now = is_antigravity_running(k32)
             if ag_now and not ag_was_running:
@@ -226,5 +309,4 @@ def run_watcher_loop() -> None:
             ag_was_running = ag_now
             time.sleep(WATCHER_POLL_SEC)
     finally:
-        if watcher_mutex:
-            k32.CloseHandle(watcher_mutex)
+        ipc.release()
