@@ -6,6 +6,8 @@ A lightweight, local-only desktop monitor for **Antigravity 2.0** (Windows 10/11
 
 > **Disclaimer**: GravityPulse is an unofficial, read-only community tool. It reads local telemetry files under `~/.gemini/antigravity`, requires no API keys, intercepts no network traffic, and uploads nothing. Because Antigravity's internal local storage schema may change in future updates, adjustments may occasionally be needed.
 
+https://github.com/user-attachments/assets/75b27007-e8b0-4ba2-b9fb-881ebf9f5a21
+
 <p align="center">
   <img src="docs/screenshots/dashboard_en.png" alt="GravityPulse Dashboard (English)" width="840" />
 </p>

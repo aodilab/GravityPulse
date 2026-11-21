@@ -12,6 +12,8 @@
 
 > **免责声明**：GravityPulse 是非官方社区开源工具，仅以只读方式解析 `~/.gemini/antigravity` 下的本地文件。若官方后续调整本地存储结构，可能需要同步适配。
 
+https://github.com/user-attachments/assets/de3b2ad2-3226-4f2c-946d-5a05e1e7ebc7
+
 <p align="center">
   <img src="docs/screenshots/dashboard_zh.png" alt="GravityPulse 主面板（中文）" width="840" />
 </p>
