@@ -126,8 +126,11 @@ class ModalMixin(TrayActionsMixin):
                 win.iconbitmap(str(ICON_PATH))
             except tk.TclError:
                 pass
-        win.transient(self.root)
-        win.grab_set()
+        root_shown = str(self.root.state()) != "withdrawn"
+        if root_shown:
+            win.transient(self.root)
+        else:
+            win.withdraw()
 
         pad = self.px(18)
         card = tk.Frame(win, bg=BG_CARD, padx=pad, pady=pad, highlightbackground=LINE_HEX, highlightthickness=1)
@@ -291,6 +294,11 @@ class ModalMixin(TrayActionsMixin):
         px_x = self.root.winfo_rootx() + (self.win_w - win.winfo_reqwidth()) // 2
         px_y = self.root.winfo_rooty() + (self.win_h - win.winfo_reqheight()) // 2
         win.geometry(f"+{max(0, px_x)}+{max(0, px_y)}")
+        if root_shown:
+            try:
+                win.grab_set()
+            except tk.TclError:
+                pass
         self._calib_win = win
 
     def _enqueue_switch_alerts(self, alerts: list[tuple[str, str] | tuple[str, str, bool]]) -> None:

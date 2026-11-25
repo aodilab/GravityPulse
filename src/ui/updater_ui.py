@@ -138,8 +138,11 @@ class UpdaterUiMixin:
                 win.iconbitmap(str(ICON_PATH))
             except tk.TclError:
                 pass
-        win.transient(self.root)
-        win.grab_set()
+        root_shown = str(self.root.state()) != "withdrawn"
+        if root_shown:
+            win.transient(self.root)
+        else:
+            win.withdraw()
         win.protocol("WM_DELETE_WINDOW", self._on_update_win_close)
 
         pad = self.px(18)
@@ -160,6 +163,11 @@ class UpdaterUiMixin:
             self._render_update_dialog_body(self._last_update_check)
 
         self._center_update_dialog(win)
+        if root_shown:
+            try:
+                win.grab_set()
+            except tk.TclError:
+                pass
 
     def _on_update_win_close(self) -> None:
         if self._update_applying:

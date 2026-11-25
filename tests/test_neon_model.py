@@ -37,6 +37,7 @@ from src.core.protobuf_decoder import _classify_model_strings
 from src.core.quota import compute_quota_summary, load_quota_config, save_quota_config
 from src.ui.desktop_app import GravityPulseApp
 from src.ui.modals import build_calibrated_quota_config, parse_reset_countdown_to_start
+from src.ui.primitives import FlatDialogButton
 from src.ui.system_tray import SystemTrayIcon
 from tests.helpers import init_summary_db, local_iso, make_step_meta, write_transcript
 
@@ -345,7 +346,7 @@ class TestNeonModelSupport(unittest.TestCase):
                 card = ui._calib_win.winfo_children()[0]
                 entries = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Entry)]
                 checks = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Checkbutton)]
-                buttons = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Button)]
+                buttons = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, (tk.Button, FlatDialogButton))]
                 used_entry, cd_entry = entries[0], entries[1]
                 reset_chk = checks[0]
                 save_btn = next(b for b in buttons if b.cget("text") == "保存并应用")

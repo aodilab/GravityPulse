@@ -449,9 +449,19 @@ class TestUpdaterCore(unittest.TestCase):
                         self.assertEqual(btn.cget("bg"), INK)
                         self.assertEqual(btn.cget("fg"), "#ffffff")
 
-                        with mock.patch("src.ui.updater_ui.threading.Thread", _SyncThread):
+                        orig_after = root.after
+
+                        def _sync_after(ms: int, func=None, *args):
+                            if ms == 0 and callable(func):
+                                func(*args)
+                                return "sync-after"
+                            return orig_after(ms, func, *args) if func is not None else orig_after(ms)
+
+                        with (
+                            mock.patch("src.ui.updater_ui.threading.Thread", _SyncThread),
+                            mock.patch.object(root, "after", side_effect=_sync_after),
+                        ):
                             btn.invoke()  # type: ignore[attr-defined]
-                        root.update()
 
                         self.assertFalse(app._update_applying)
                         self.assertEqual(btn.cget("text"), opened_lbl)
