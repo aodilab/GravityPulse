@@ -26,7 +26,9 @@ _TRANSCRIPT_CACHE: dict[Path, tuple[int, int, list[tuple[datetime, bool]], bool,
 _META_CACHE: dict[Path, tuple[tuple[int, int, int, int], dict[str, ConversationMeta]]] = {}
 _ANN_FILE_CACHE: dict[Path, tuple[int, int, bool]] = {}
 _BG_TASK_START_RE = re.compile(r"Tool is running as a background task with task id:\s*([^\s\\]+)")
-_BG_TASK_FINISH_RE = re.compile(r'Task id\s+\\?"([^"\\]+)\\?"\s+finished')
+_BG_TASK_FINISH_RE = re.compile(
+    r'Task id\s+\\?"([^"\\]+)\\?"\s+(?:finished|was\s+cancel(?:l)?ed|cancel(?:l)?ed|failed|timed\s+out)'
+)
 
 
 @dataclass
@@ -215,7 +217,7 @@ def parse_transcript_details(
                                 pending_tasks[m.group(1)] = ts.timestamp() if ts is not None else 0.0
 
                 content_str = item.get("content")
-                if isinstance(content_str, str) and "Task id" in content_str and "finished" in content_str:
+                if isinstance(content_str, str) and "Task id" in content_str:
                     for finished_tid in _BG_TASK_FINISH_RE.findall(content_str):
                         pending_tasks.pop(finished_tid, None)
     except OSError:

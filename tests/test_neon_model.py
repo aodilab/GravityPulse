@@ -1,16 +1,21 @@
 """Unit tests for Gemini 4 Neon classification, calibrated quota accounting, cache TTL, and 512K switch advice."""
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import tempfile
+import tkinter as tk
 import unittest
+from unittest import mock
 
 from config.settings import (
-    LOCAL_TZ,
     COMPACTION_512K_TOKENS,
+    DEFAULT_CARBON_MULTIPLIER,
+    DEFAULT_NEON_MULTIPLIER,
+    FIVE_HOUR_WINDOW_SEC,
     HYDROGEN_INPUT_PER_M,
+    LOCAL_TZ,
     NEON_CACHE_PER_M,
     NEON_INPUT_PER_M,
     NEON_OUTPUT_PER_M,
@@ -30,7 +35,9 @@ from src.core import (
 )
 from src.core.protobuf_decoder import _classify_model_strings
 from src.core.quota import compute_quota_summary, load_quota_config, save_quota_config
-from src.ui.modals import build_calibrated_quota_config
+from src.ui.desktop_app import GravityPulseApp
+from src.ui.modals import build_calibrated_quota_config, parse_reset_countdown_to_start
+from src.ui.system_tray import SystemTrayIcon
 from tests.helpers import init_summary_db, local_iso, make_step_meta, write_transcript
 
 
@@ -41,11 +48,17 @@ class TestNeonModelSupport(unittest.TestCase):
         self.assertEqual(_classify_model_strings("orchestrator-neon", "Orchestrator (Neon)"), "exclude")
 
     def test_step_weighted_usd_neon_matches_calibrated_rate(self) -> None:
-        h_usd = step_weighted_usd("hydrogen", 1_000_000, 10_000_000, 200_000, carbon_multiplier=3.0)
-        n_usd = step_weighted_usd("neon", 1_000_000, 10_000_000, 200_000, carbon_multiplier=3.0)
+        self.assertAlmostEqual(DEFAULT_CARBON_MULTIPLIER, 3.5, places=4)
+        self.assertAlmostEqual(DEFAULT_NEON_MULTIPLIER, 1.75, places=4)
+        h_usd = step_weighted_usd("hydrogen", 1_000_000, 10_000_000, 200_000, carbon_multiplier=DEFAULT_CARBON_MULTIPLIER)
+        c_usd = step_weighted_usd("carbon", 1_000_000, 10_000_000, 200_000, carbon_multiplier=DEFAULT_CARBON_MULTIPLIER)
+        n_usd = step_weighted_usd("neon", 1_000_000, 10_000_000, 200_000, carbon_multiplier=DEFAULT_CARBON_MULTIPLIER)
         expected = NEON_INPUT_PER_M + 10.0 * NEON_CACHE_PER_M + 0.2 * NEON_OUTPUT_PER_M
+        self.assertAlmostEqual(c_usd, h_usd * 3.5, places=6)
         self.assertAlmostEqual(n_usd, expected, places=6)
         self.assertAlmostEqual(n_usd, h_usd * (NEON_INPUT_PER_M / HYDROGEN_INPUT_PER_M), places=6)
+        n_custom = step_weighted_usd("neon", 1_000_000, 10_000_000, 200_000, carbon_multiplier=3.5, neon_multiplier=2.0)
+        self.assertAlmostEqual(n_custom, h_usd * 2.0, places=6)
 
     def test_neon_cache_ttl_transitions(self) -> None:
         now = datetime(2026, 11, 22, 1, 0, 0, tzinfo=LOCAL_TZ)
@@ -73,7 +86,6 @@ class TestNeonModelSupport(unittest.TestCase):
             conv_db.parent.mkdir(parents=True, exist_ok=True)
             cc = sqlite3.connect(conv_db)
             cc.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB)")
-            # Pre-expansion (2026-11-20) 4m misses should be ignored after 2026-11-21 18:11 epoch
             t_old = int(datetime(2026, 11, 20, 14, 0, 0, tzinfo=LOCAL_TZ).timestamp())
             rows = [(0, 15, make_step_meta(t_old, 1532, 60_000, 500, 0))]
             idx = 1
@@ -81,7 +93,6 @@ class TestNeonModelSupport(unittest.TestCase):
                 t_old += 240
                 rows.append((idx, 15, make_step_meta(t_old, 1532, 62_000, 500, 0)))
                 idx += 1
-            # Post-expansion (2026-11-21 20:00) 5.5m hits confirm expanded pool, without altering Carbon/Hydrogen
             t_new = int(datetime(2026, 11, 21, 20, 0, 0, tzinfo=LOCAL_TZ).timestamp())
             rows.append((idx, 15, make_step_meta(t_new, 1532, 80_000, 500, 0)))
             idx += 1
@@ -93,10 +104,10 @@ class TestNeonModelSupport(unittest.TestCase):
             cc.commit()
             cc.close()
 
-            now_bj = datetime(2026, 11, 22, 1, 0, 0, tzinfo=LOCAL_TZ)
-            th = learn_empirical_cache_thresholds(root, now_bj)
+            now_loc = datetime(2026, 11, 22, 1, 0, 0, tzinfo=LOCAL_TZ)
+            th = learn_empirical_cache_thresholds(root, now_loc)
             self.assertEqual(th["Neon"], (360, 390, 420))
-            self.assertEqual(th["Carbon"], (180, 300, 480))
+            self.assertEqual(th["Carbon"], (180, 240, 360))
             self.assertEqual(th["Hydrogen"], (300, 900, 1200))
 
     def test_neon_cold_cache_breakeven_and_512k_thresholds(self) -> None:
@@ -111,19 +122,20 @@ class TestNeonModelSupport(unittest.TestCase):
                 compaction_count=cc, context_limit=COMPACTION_512K_TOKENS,
             )
 
-        # Short cold dialog (<100K) stays healthy; long cold dialog (>=130K, >=7m) switches
-        be_short = evaluate_cold_cache_breakeven(make_neon(80_000, sec_ago=450), "expired", 450)
+        # Short cold dialog (<120K) stays healthy; long cold dialog (>=180K, >=7m) switches
+        be_short = evaluate_cold_cache_breakeven(make_neon(100_000, sec_ago=450), "expired", 450)
         self.assertFalse(bool(be_short["should_switch"]))
-        self.assertEqual(evaluate_dialog_advice_detail(make_neon(80_000, sec_ago=450), "expired", 450)[0], "ok")
+        self.assertEqual(evaluate_dialog_advice_detail(make_neon(100_000, sec_ago=450), "expired", 450)[0], "ok")
 
-        be_long = evaluate_cold_cache_breakeven(make_neon(140_000, sec_ago=450), "expired", 450)
+        be_long = evaluate_cold_cache_breakeven(make_neon(185_000, sec_ago=450), "expired", 450)
         self.assertTrue(bool(be_long["should_switch"]))
-        self.assertEqual(classify_switch_kind(make_neon(140_000, sec_ago=450), "expired", 450), "cache")
+        self.assertEqual(classify_switch_kind(make_neon(185_000, sec_ago=450), "expired", 450), "cache")
 
-        # 512K structural thresholds: <280K ok, 280K-350K watch, >=350K switch; cc=1 switch
-        self.assertEqual(evaluate_dialog_advice_detail(make_neon(260_000), "fresh", 60)[0], "ok")
-        self.assertEqual(evaluate_dialog_advice_detail(make_neon(300_000), "fresh", 60)[0], "watch")
-        self.assertEqual(classify_switch_kind(make_neon(360_000), "fresh", 60), "structural")
+        # 512K pause thresholds (idle): <190K ok, 190K-229K quiet watch, >=230K Step-1 switch; cc=1 Step-2 switch
+        self.assertEqual(evaluate_dialog_advice_detail(make_neon(180_000), "fresh", 60)[0], "ok")
+        self.assertEqual(evaluate_dialog_advice_detail(make_neon(210_000), "fresh", 60)[0], "watch")
+        self.assertEqual(classify_switch_kind(make_neon(240_000), "fresh", 60), "structural")
+        self.assertEqual(classify_switch_kind(make_neon(435_000), "fresh", 60), "critical")
         self.assertEqual(classify_switch_kind(make_neon(120_000, cc=1), "fresh", 60), "structural")
 
     def test_end_to_end_neon_quota_and_report_serialization(self) -> None:
@@ -194,7 +206,6 @@ class TestNeonModelSupport(unittest.TestCase):
             db = conv_dir / "c-hist.db"
             conn = sqlite3.connect(db)
             conn.execute("CREATE TABLE steps (step_type INTEGER, metadata BLOB)")
-            # 1M output tokens = $7.50 H_base each; pre-cut at 3.0x = $22.50, post-cut at 1.3333x = $9.99975
             conn.execute("INSERT INTO steps VALUES (15, ?)", (make_step_meta(int(t_pre.timestamp()), 1437, 0, 1_000_000, 0),))
             conn.execute("INSERT INTO steps VALUES (15, ?)", (make_step_meta(int(t_post.timestamp()), 1437, 0, 1_000_000, 0),))
             conn.commit()
@@ -236,7 +247,6 @@ class TestNeonModelSupport(unittest.TestCase):
             db = conv_dir / "fh-1.db"
             conn = sqlite3.connect(db)
             conn.execute("CREATE TABLE steps (step_type INTEGER, metadata BLOB)")
-            # Neon 1M output = $15 each -> old=$15 (in old 5h), new1+new2=$30 (in new 5h)
             conn.execute("INSERT INTO steps VALUES (15, ?)", (make_step_meta(int(t_old.timestamp()), 1532, 0, 1_000_000, 0),))
             conn.execute("INSERT INTO steps VALUES (15, ?)", (make_step_meta(int(t_new1.timestamp()), 1532, 0, 1_000_000, 0),))
             conn.execute("INSERT INTO steps VALUES (15, ?)", (make_step_meta(int(t_new2.timestamp()), 1532, 0, 1_000_000, 0),))
@@ -245,8 +255,9 @@ class TestNeonModelSupport(unittest.TestCase):
 
             cfg = QuotaConfig(
                 carbon_multiplier=3.0,
+                neon_multiplier=2.0,
                 subscription_start=local_iso(2026, 11, 18, 0, 0, 0),
-                weekly_cap_usd_override=400.0,  # 5h cap = $100
+                weekly_cap_usd_override=400.0,
                 rolling_reset_start=local_iso(2026, 11, 18, 0, 0, 0),
                 five_hour_reset_start=t_reset.isoformat(),
             )
@@ -254,12 +265,117 @@ class TestNeonModelSupport(unittest.TestCase):
             save_quota_config(cfg, cfg_file)
             loaded = load_quota_config(cfg_file)
             self.assertEqual(loaded.five_hour_reset_start, t_reset.isoformat())
+            self.assertAlmostEqual(loaded.neon_multiplier, 2.0, places=4)
 
             qs = compute_quota_summary(root, t_reset, t_new2 + timedelta(minutes=1), quota_config=loaded)
-            # 7d includes all 3 steps ($45 / $400 = 11.25%), 5h includes both new1 & new2 ($30 / $100 = 30.0%)
             self.assertAlmostEqual(qs.cycle_used_pct, 11.25, places=2)
             self.assertAlmostEqual(qs.five_hour_used_pct, 30.0, places=2)
             self.assertAlmostEqual(qs.five_hour_left_pct, 70.0, places=2)
+
+            cal = build_calibrated_quota_config(loaded, t_new2 + timedelta(minutes=2), 15.0, 3.0, True, antigravity_dir=root)
+            self.assertAlmostEqual(cal.neon_multiplier, 2.0, places=4)
+            reset_cal = build_calibrated_quota_config(loaded, t_new2 + timedelta(minutes=2), 0.0, 3.0, True, reset_cycle=True, antigravity_dir=root)
+            self.assertAlmostEqual(reset_cal.neon_multiplier, 2.0, places=4)
+            self.assertEqual(reset_cal.five_hour_reset_start, t_reset.isoformat())
+
+            now_cd = datetime(2026, 11, 24, 7, 20, 0, tzinfo=LOCAL_TZ)
+            loaded_with_hist = QuotaConfig(
+                carbon_multiplier=loaded.carbon_multiplier,
+                neon_multiplier=loaded.neon_multiplier,
+                carbon_multiplier_history=((local_iso(2026, 11, 19, 10, 20, 0), 3.0),),
+                subscription_start=loaded.subscription_start,
+                weekly_cap_usd_override=loaded.weekly_cap_usd_override,
+                rolling_reset_start=loaded.rolling_reset_start,
+                five_hour_reset_start=loaded.five_hour_reset_start,
+            )
+            cd_cal = build_calibrated_quota_config(
+                loaded_with_hist, now_cd, 3.0, 3.0, True, reset_cycle=True, antigravity_dir=root, reset_countdown="6d 20h",
+            )
+            self.assertEqual(cd_cal.rolling_reset_start, local_iso(2026, 11, 24, 3, 20, 0))
+            self.assertEqual(cd_cal.five_hour_reset_start, t_reset.isoformat())
+            self.assertEqual(cd_cal.carbon_multiplier_history, loaded_with_hist.carbon_multiplier_history)
+            zh_cal = build_calibrated_quota_config(
+                loaded_with_hist, now_cd, 3.0, 3.0, True, reset_cycle=True, antigravity_dir=root, reset_countdown="6天20小时",
+            )
+            self.assertEqual(zh_cal.rolling_reset_start, local_iso(2026, 11, 24, 3, 20, 0))
+            fallback_cal = build_calibrated_quota_config(
+                loaded_with_hist, now_cd, 3.0, 3.0, True, reset_cycle=True, antigravity_dir=root, reset_countdown="8d",
+            )
+            self.assertEqual(fallback_cal.rolling_reset_start, local_iso(2026, 11, 24, 7, 20, 0))
+
+    def test_parse_reset_countdown_to_start_edges_and_modal_validation(self) -> None:
+        now_loc = datetime(2026, 11, 24, 7, 20, 0, tzinfo=LOCAL_TZ)
+        self.assertEqual(parse_reset_countdown_to_start("6d 20h", now_loc), datetime(2026, 11, 24, 3, 20, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("Resets in 6days 20hrs 15mins", now_loc), datetime(2026, 11, 24, 3, 35, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("6天20时30分后重置", now_loc), datetime(2026, 11, 24, 3, 50, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("20h", now_loc), datetime(2026, 11, 18, 3, 20, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("45m", now_loc), datetime(2026, 11, 17, 8, 5, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("6.5d", now_loc), datetime(2026, 11, 23, 19, 20, 0, tzinfo=LOCAL_TZ))
+        self.assertEqual(parse_reset_countdown_to_start("7d", now_loc), now_loc)
+        self.assertEqual(
+            parse_reset_countdown_to_start("1h 46m", now_loc, cycle_sec=FIVE_HOUR_WINDOW_SEC),
+            datetime(2026, 11, 24, 4, 6, 0, tzinfo=LOCAL_TZ),
+        )
+        utc_now = now_loc.astimezone(timezone.utc)
+        naive_now = now_loc.replace(tzinfo=None)
+        expected_iso = local_iso(2026, 11, 24, 3, 20, 0)
+        self.assertEqual(parse_reset_countdown_to_start("6d 20h", utc_now).isoformat(timespec="seconds"), expected_iso)
+        self.assertEqual(parse_reset_countdown_to_start("6d 20h", naive_now).isoformat(timespec="seconds"), expected_iso)
+        for bad in ("", "   ", "0d", "0d 0h", "7d 1m", "8d", "-6d 20h", "6d 20", "1month", "10ms", "2decades", "1.2.3d", "abc"):
+            self.assertIsNone(parse_reset_countdown_to_start(bad, now_loc), f"Expected None for {bad!r}")
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            with (
+                mock.patch.object(SystemTrayIcon, "start"),
+                mock.patch.object(SystemTrayIcon, "stop"),
+                mock.patch.object(GravityPulseApp, "refresh"),
+                mock.patch("src.ui.modals.save_quota_config") as mock_save,
+            ):
+                ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="zh")
+                ui._quota_cfg = QuotaConfig(
+                    carbon_multiplier=3.5,
+                    neon_multiplier=1.75,
+                    weekly_cap_usd_override=2000.0,
+                    five_hour_reset_start=local_iso(2026, 11, 24, 4, 6, 0),
+                )
+                ui._open_calibration_dialog()
+                assert ui._calib_win is not None
+                card = ui._calib_win.winfo_children()[0]
+                entries = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Entry)]
+                checks = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Checkbutton)]
+                buttons = [w for f in card.winfo_children() if isinstance(f, tk.Frame) for w in f.winfo_children() if isinstance(w, tk.Button)]
+                used_entry, cd_entry = entries[0], entries[1]
+                reset_chk = checks[0]
+                save_btn = next(b for b in buttons if b.cget("text") == "保存并应用")
+
+                self.assertEqual(str(used_entry.cget("state")), "normal")
+                self.assertEqual(str(cd_entry.cget("state")), "disabled")
+
+                reset_chk.invoke()
+                self.assertEqual(str(used_entry.cget("state")), "disabled")
+                self.assertEqual(str(cd_entry.cget("state")), "normal")
+
+                cd_entry.insert(0, "6d 20")
+                save_btn.invoke()
+                mock_save.assert_not_called()
+                self.assertTrue(ui._calib_win.winfo_exists())
+
+                cd_entry.delete(0, tk.END)
+                cd_entry.insert(0, "6d 20h")
+                save_btn.invoke()
+                mock_save.assert_called_once()
+                saved_cfg = mock_save.call_args.args[0]
+                self.assertEqual(saved_cfg.five_hour_reset_start, local_iso(2026, 11, 24, 4, 6, 0))
+                self.assertAlmostEqual(saved_cfg.neon_multiplier, 1.75, places=4)
+                self.assertFalse(ui._calib_win.winfo_exists())
+                ui._quit_completely()
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

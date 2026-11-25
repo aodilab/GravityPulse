@@ -32,6 +32,19 @@ class _LedgerCache:
 
 
 _LEDGER_CACHE: dict[Path, _LedgerCache] = {}
+_LEDGER_TR_DECODED: dict[tuple[Path, str], tuple[int, int, list[tuple[datetime, bool]], bool]] = {}
+
+
+def _decode_ledger_tr_events(ev_json: str) -> list[tuple[datetime, bool]]:
+    try:
+        raw_list = json.loads(ev_json)
+    except json.JSONDecodeError:
+        return []
+    events: list[tuple[datetime, bool]] = []
+    for item in raw_list:
+        sec, usec = divmod(int(item[0]), 1_000_000)
+        events.append((datetime.fromtimestamp(sec, tz=timezone.utc).replace(microsecond=usec), bool(item[1])))
+    return events
 
 
 def _norm_path(p: Path) -> Path:
@@ -363,6 +376,63 @@ def sync_telemetry_ledger(
     return merged_meta
 
 
+def load_ledger_transcripts_by_sig(
+    ledger_path: Path,
+    wanted_sigs: dict[str, tuple[int, int]],
+) -> dict[str, tuple[list[tuple[datetime, bool]], bool]]:
+    """Batch-load already-synced live transcripts from the local ledger when `(mtime_ns, size)` matches."""
+    if not wanted_sigs or not ledger_path.is_file():
+        return {}
+    norm_path = _norm_path(ledger_path)
+    out: dict[str, tuple[list[tuple[datetime, bool]], bool]] = {}
+    missing: list[str] = []
+    with _LEDGER_LOCK:
+        cache = _load_cache_locked(norm_path)
+        for cid, sig in wanted_sigs.items():
+            if cache.transcript_sigs.get(cid) != sig:
+                continue
+            dec = _LEDGER_TR_DECODED.get((norm_path, cid))
+            if dec is not None and dec[0] == sig[0] and dec[1] == sig[1]:
+                out[cid] = (dec[2], dec[3])
+            else:
+                missing.append(cid)
+        if not missing:
+            return out
+        rows: list[tuple[str, int, int, int, str]] = []
+        conn: sqlite3.Connection | None = None
+        try:
+            conn = sqlite3.connect(norm_path, timeout=2.0)
+            for idx in range(0, len(missing), 400):
+                chunk = missing[idx : idx + 400]
+                ph = ",".join("?" for _ in chunk)
+                rows.extend(
+                    conn.execute(
+                        f"SELECT cid, mtime_ns, size, has_user_input, events_json FROM conv_transcripts WHERE cid IN ({ph})",
+                        chunk,
+                    ).fetchall()
+                )
+        except sqlite3.Error:
+            return out
+        finally:
+            if conn is not None:
+                conn.close()
+
+    decoded_updates: list[tuple[str, int, int, list[tuple[datetime, bool]], bool]] = []
+    for cid, mtime_ns, size, has_user_int, ev_json in rows:
+        sig = (int(mtime_ns), int(size))
+        if wanted_sigs.get(cid) != sig:
+            continue
+        events = [] if ev_json == "[]" else _decode_ledger_tr_events(ev_json)
+        has_user = bool(has_user_int)
+        out[cid] = (events, has_user)
+        decoded_updates.append((cid, sig[0], sig[1], events, has_user))
+    if decoded_updates:
+        with _LEDGER_LOCK:
+            for cid, m_ns, sz, evs, hu in decoded_updates:
+                _LEDGER_TR_DECODED[(norm_path, cid)] = (m_ns, sz, evs, hu)
+    return out
+
+
 def load_archived_transcripts(
     ledger_path: Path,
     exclude_cids: set[str],
@@ -389,16 +459,7 @@ def load_archived_transcripts(
     for cid, has_user_int, ev_json in rows:
         if cid in exclude_cids:
             continue
-        try:
-            raw_list = json.loads(ev_json)
-        except json.JSONDecodeError:
-            continue
-        events: list[tuple[datetime, bool]] = []
-        for item in raw_list:
-            ts_us = int(item[0])
-            sec, usec = divmod(ts_us, 1_000_000)
-            dt = datetime.fromtimestamp(sec, tz=timezone.utc).replace(microsecond=usec)
-            events.append((dt, bool(item[1])))
+        events = _decode_ledger_tr_events(ev_json)
         if events:
             out.append((cid, events, bool(has_user_int)))
     return out

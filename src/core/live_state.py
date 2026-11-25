@@ -1,12 +1,11 @@
 """Lightweight directory fingerprinting and pure-memory 1s live stopwatch/cache progression."""
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime
 import os
 from pathlib import Path
 
 from config.settings import (
-    LOCAL_TZ,
     CARBON_CACHE_COOLING_SEC,
     CARBON_CACHE_EXPIRED_SEC,
     CARBON_CACHE_FRESH_SEC,
@@ -14,6 +13,7 @@ from config.settings import (
     IMPLICIT_CACHE_EXPIRED_SEC,
     IMPLICIT_CACHE_FRESH_SEC,
     IMPLICIT_CACHE_MIN_TOKENS,
+    LOCAL_TZ,
     NEON_CACHE_COOLING_SEC,
     NEON_CACHE_EXPIRED_SEC,
     NEON_CACHE_FRESH_SEC,
@@ -93,6 +93,12 @@ def compute_telemetry_fingerprint(antigravity_dir: Path) -> tuple[tuple[str, int
                             entries.append((f"tr:{e.name}", st.st_mtime_ns, st.st_size))
                         except OSError:
                             pass
+                        tm = os.path.join(e.path, "task.md")
+                        try:
+                            st_m = os.stat(tm)
+                            entries.append((f"tm:{e.name}", st_m.st_mtime_ns, st_m.st_size))
+                        except OSError:
+                            pass
         except OSError:
             pass
 
@@ -120,11 +126,11 @@ def live_report_fields(
     running_count: int,
     merged_intervals: tuple[TimeInterval, ...],
     dialogs: tuple[DialogContextInfo, ...],
-    now_bj: datetime,
+    now_loc: datetime,
     cap_end: datetime,
 ) -> dict[str, float | bool]:
     """Return confirmed work-time fields without speculative unattended tail ticking."""
-    _ = (is_active, running_count, merged_intervals, dialogs, now_bj, cap_end)
+    _ = (is_active, running_count, merged_intervals, dialogs, now_loc, cap_end)
     return {
         "base_total_seconds": float(base_total_seconds),
         "live_tick_active": False,
@@ -156,7 +162,7 @@ def _expected_idle_state(d: dict, idle_sec: int) -> str:
 def compute_live_display_update(
     payload: dict,
     elapsed_mono: float,
-    now_bj: datetime,
+    now_loc: datetime,
 ) -> tuple[str, str, bool]:
     """Advance hero stopwatch strings and idle-dialog cache status in memory."""
     if payload.get("live_tick_active"):
@@ -168,17 +174,21 @@ def compute_live_display_update(
     hms_str = format_hms(total_sec)
 
     dialogs_changed = False
-    now_ts = now_bj.timestamp()
+    now_ts = now_loc.timestamp()
     for d in payload.get("dialogs", ()):
-        if d.get("is_running"):
+        is_run = bool(d.get("is_running"))
+        self_run = bool(d.get("self_running", True))
+        if is_run and self_run:
             continue
         last_ts = float(d.get("last_active_ts", 0.0))
         if last_ts <= 0.0:
             continue
         idle_sec = max(0, int(round(now_ts - last_ts)))
         new_ago = _format_idle_ago(idle_sec)
+        n_sub = int(d.get("active_subtasks", 0) or 0)
+        expected_idle = f"子任务 {n_sub} · {new_ago}" if (is_run and not self_run and n_sub > 0) else new_ago
         new_state = _expected_idle_state(d, idle_sec)
-        if new_ago == d.get("cache_idle_text") and new_state == d.get("cache_state"):
+        if expected_idle == d.get("cache_idle_text") and new_state == d.get("cache_state"):
             continue
 
         ctx_tok = int(d.get("context_tokens", 0))
@@ -188,7 +198,7 @@ def compute_live_display_update(
             title=str(d.get("title", "")),
             workspace=str(d.get("workspace", "")),
             model_label=str(d.get("model_label", "Carbon")),
-            is_running=False,
+            is_running=is_run,
             input_tokens=ctx_tok,
             cache_read_tokens=0,
             output_tokens=0,
@@ -196,11 +206,19 @@ def compute_live_display_update(
             last_active=datetime.fromtimestamp(last_ts, tz=LOCAL_TZ),
             compaction_count=int(d.get("compaction_count", 0)),
             cache_thresholds=tuple(th) if th else None,
+            active_subtasks=n_sub,
+            self_running=self_run,
             context_limit=int(d.get("safe_limit", 0)),
+            work_phase=str(d.get("work_phase") or "idle"),
+            project_profile=d.get("project_profile"),
+            is_handover_turn=bool(d.get("is_handover_turn")),
+            is_subdialog=bool(d.get("is_subdialog")),
+            parent_conversation_id=str(d.get("parent_conversation_id", "")),
+            parent_title=str(d.get("parent_title", "")),
         )
-        c_state, c_status, c_idle, eff_idle = evaluate_implicit_cache_status(info, now_bj)
+        c_state, c_status, c_idle, eff_idle = evaluate_implicit_cache_status(info, now_loc)
         adv_key, adv_text, adv_reason, notify_detail = evaluate_dialog_advice_detail(info, c_state, eff_idle)
-        sw_kind = classify_switch_kind(info, c_state, eff_idle) if adv_key == "switch" else ""
+        sw_kind = classify_switch_kind(info, c_state, eff_idle)
         d["cache_state"] = c_state
         d["cache_status_text"] = c_status
         d["cache_idle_text"] = c_idle

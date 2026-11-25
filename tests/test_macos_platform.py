@@ -5,20 +5,25 @@ from pathlib import Path
 import plistlib
 import struct
 import tempfile
+import tkinter as tk
 import unittest
+from unittest import mock
 
-from config.settings import IS_MACOS, IS_WINDOWS, MACOS_LAUNCH_AGENT_LABEL
+from config.settings import INK, IS_MACOS, IS_WINDOWS, MACOS_LAUNCH_AGENT_LABEL
 from scripts.icon_builder import _create_macos_desktop_shortcut, _find_macos_app_bundle, build_icns
 from src.core.platform_ipc import SingletonIPC, is_named_lock_held
+from src.core.updater_pkg import open_macos_dmg
 from src.core.watcher import (
     build_macos_launch_agent_plist,
     install_macos_launch_agent,
     is_antigravity_process_output,
     uninstall_macos_launch_agent,
 )
+from src.ui.desktop_app import GravityPulseApp
 from src.ui.hero_view import compute_mousewheel_units
 from src.ui.i18n import parse_macos_apple_languages
 from src.ui.macos_tray import render_macos_menubar_template_png
+from src.ui.primitives import FlatDialogButton, make_dialog_button
 
 
 class TestMacOSPlatform(unittest.TestCase):
@@ -115,6 +120,97 @@ class TestMacOSPlatform(unittest.TestCase):
             finally:
                 ipc1.release()
             self.assertFalse(is_named_lock_held("test_app", lock_dir=tmp_path))
+
+    def test_macos_dialog_buttons_avoid_aqua_white_on_white_and_preserve_windows_button(self) -> None:
+        def _walk_widgets(widget: tk.Misc) -> list[tk.Misc]:
+            out: list[tk.Misc] = [widget]
+            for child in widget.winfo_children():
+                out.extend(_walk_widgets(child))
+            return out
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            clicks: list[str] = []
+            mac_btn = make_dialog_button(
+                root, text="Save", command=lambda: clicks.append("mac"),
+                bg=INK, fg="#ffffff", padx=16, pady=5, font=("Helvetica", 9, "bold"), use_flat=True,
+            )
+            self.assertIsInstance(mac_btn, FlatDialogButton)
+            self.assertEqual(mac_btn.cget("bg"), INK)
+            self.assertEqual(mac_btn.cget("fg"), "#ffffff")
+            self.assertEqual(mac_btn.cget("state"), "normal")
+            mac_btn.invoke()  # type: ignore[attr-defined]
+            self.assertEqual(clicks, ["mac"])
+
+            mac_btn.configure(state="disabled", text="Busy")
+            self.assertEqual(mac_btn.cget("state"), "disabled")
+            self.assertEqual(mac_btn.cget("text"), "Busy")
+            mac_btn.invoke()  # type: ignore[attr-defined]
+            self.assertEqual(clicks, ["mac"])
+
+            win_btn = make_dialog_button(
+                root, text="Save", command=lambda: clicks.append("win"),
+                bg=INK, fg="#ffffff", padx=16, pady=5, font=("Helvetica", 9, "bold"), use_flat=False,
+            )
+            self.assertIsInstance(win_btn, tk.Button)
+            self.assertEqual(win_btn.cget("bg"), INK)
+            self.assertEqual(win_btn.cget("fg"), "#ffffff")
+
+            with (
+                mock.patch("src.ui.desktop_app.SystemTrayIcon.start", return_value=None),
+                mock.patch("src.ui.desktop_app.SystemTrayIcon.stop", return_value=None),
+                mock.patch.object(GravityPulseApp, "refresh", return_value=None),
+            ):
+                app = GravityPulseApp(root, start_hidden=True, language="en")
+                try:
+                    with mock.patch("src.ui.primitives.IS_MACOS", True):
+                        app._open_calibration_dialog()
+                        assert app._calib_win is not None
+                        mac_widgets = _walk_widgets(app._calib_win)
+                        self.assertFalse(any(isinstance(w, tk.Button) for w in mac_widgets))
+                        self.assertTrue(
+                            any(
+                                isinstance(w, FlatDialogButton) and w.cget("bg") == INK and w.cget("fg") == "#ffffff"
+                                for w in mac_widgets
+                            )
+                        )
+                        app._calib_win.destroy()
+                        app._calib_win = None
+
+                    with mock.patch("src.ui.primitives.IS_MACOS", False):
+                        app._open_calibration_dialog()
+                        assert app._calib_win is not None
+                        win_widgets = _walk_widgets(app._calib_win)
+                        self.assertTrue(
+                            any(
+                                isinstance(w, tk.Button) and w.cget("bg") == INK and w.cget("fg") == "#ffffff"
+                                for w in win_widgets
+                            )
+                        )
+                        app._calib_win.destroy()
+                        app._calib_win = None
+                finally:
+                    app._quit_completely()
+        finally:
+            try:
+                root.destroy()
+            except Exception:
+                pass
+
+    def test_open_macos_dmg_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dmg = Path(tmp) / "GravityPulse-v1.3.0.dmg"
+            dmg.write_bytes(b"DMG")
+            with mock.patch("src.core.updater_pkg.sys.platform", "win32"):
+                self.assertFalse(open_macos_dmg(dmg))
+            with (
+                mock.patch("src.core.updater_pkg.sys.platform", "darwin"),
+                mock.patch("src.core.updater_pkg.subprocess.Popen") as popen_mock,
+            ):
+                self.assertTrue(open_macos_dmg(dmg))
+                popen_mock.assert_called_once_with(["open", str(dmg)])
+                self.assertFalse(open_macos_dmg(Path(tmp) / "missing.dmg"))
 
 
 if __name__ == "__main__":

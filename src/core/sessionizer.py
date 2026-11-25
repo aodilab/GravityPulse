@@ -15,7 +15,12 @@ from src.core.models import (
     TimeInterval,
     local_day_bounds,
 )
-from src.core.ledger import load_archived_transcripts, resolve_ledger_path, sync_telemetry_ledger
+from src.core.ledger import (
+    load_archived_transcripts,
+    load_ledger_transcripts_by_sig,
+    resolve_ledger_path,
+    sync_telemetry_ledger,
+)
 from src.core.storage import (
     collect_active_subtask_counts,
     load_db_metadata,
@@ -223,6 +228,7 @@ def collect_root_sessions(
     meta_map: dict[str, ConversationMeta] | None = None,
     active_task_gap: timedelta = ACTIVE_TASK_GAP_LIMIT,
     ledger_path: Path | None = None,
+    include_active_subtasks: bool = True,
 ) -> list[RootSession]:
     """Load and sessionize root user conversations (live transcripts + archived ledger entries)."""
     brain_dir = antigravity_dir / "brain"
@@ -234,12 +240,17 @@ def collect_root_sessions(
             else load_db_metadata(antigravity_dir / "conversation_summaries.db")
         )
 
-    subtask_counts = collect_active_subtask_counts(antigravity_dir, meta_map, effective_now)
+    subtask_counts = (
+        collect_active_subtask_counts(antigravity_dir, meta_map, effective_now)
+        if include_active_subtasks
+        else {}
+    )
     root_events: dict[str, list[tuple[datetime, bool]]] = {}
     root_has_user: dict[str, bool] = {}
     live_brain_cids: set[str] = set()
 
     if brain_dir.exists():
+        candidates: list[tuple[str, Path, object]] = []
         for entry in brain_dir.iterdir():
             if not entry.is_dir():
                 continue
@@ -253,9 +264,19 @@ def collect_root_sessions(
                     continue
             except OSError:
                 continue
+            candidates.append((entry.name, transcript_path, st))
 
-            cid = entry.name
-            events, has_user = read_transcript_events(transcript_path, st)
+        ledger_hits = (
+            load_ledger_transcripts_by_sig(
+                eff_ledger,
+                {cid: (st.st_mtime_ns, st.st_size) for cid, _tp, st in candidates},
+            )
+            if eff_ledger is not None and candidates
+            else {}
+        )
+        for cid, transcript_path, st in candidates:
+            hit = ledger_hits.get(cid)
+            events, has_user = hit if hit is not None else read_transcript_events(transcript_path, st)
             if not events:
                 continue
 

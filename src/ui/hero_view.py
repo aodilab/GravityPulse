@@ -260,7 +260,7 @@ class HeroViewMixin:
                         d.get("cache_hit_pct"), d.get("cum_cache_hit_pct"), d.get("cache_state"),
                         d.get("cache_status_text"), d.get("cache_idle_text"), d.get("context_fmt"),
                         d.get("safe_limit_fmt"), d.get("safe_pct"), d.get("advice_key"), d.get("advice_text"),
-                        d.get("advice_reason"), d.get("compaction_text"),
+                        d.get("advice_reason"), d.get("compaction_text"), d.get("is_subdialog"),
                     )
                     for d in data.get("dialogs", [])
                 ),

@@ -24,12 +24,12 @@ When working heavily with Antigravity 2.0, three questions come up constantly: h
 
 ## Key Features
 
-- **7-Day & 5-Hour Rolling Quota Tracking**: Calibrates against your official quota panel in one dialog, tracks remaining 7-day cycle and 5-hour rolling budgets, and breaks down consumption by model (`Carbon`, `Neon`, `Hydrogen`, `Other`), project, time interval, and day.
-- **Implicit KV Cache & Switch-Window Advisor**: Learns per-model cache survival curves from your local step history, displays cumulative and latest-step cache hit rates, and compares cold-recomputation cost against starting a new conversation before suggesting a switch.
+- **7-Day & 5-Hour Rolling Quota Tracking**: Calibrates against your official quota panel in one dialog (including 7-day reset countdown alignment and customizable `Carbon` / `Neon` multipliers, calibrated at `3.5x` / `1.75x` by default), tracks remaining 7-day cycle and 5-hour rolling budgets, and breaks down consumption by model (`Carbon`, `Neon`, `Hydrogen`, `Other`), project, time interval, and day.
+- **Phase-Aware & Project-Adaptive Switch Advisor**: Learns per-model KV cache survival curves and per-(project, model) recent 10-dialog warmup costs to derive EOQ pause-switch thresholds. Stays quiet while an agent is actively editing or verifying, nudges once on natural pauses (idle, awaiting input, or waiting on a background build), fires an urgent safeguard only near 512K compaction (`400K` / `430K` / `450K`), and mutes automatically during handover turns.
+- **Subagent & Swarm Worker Hierarchy**: Displays active and recent subagents / Swarm workers indented beneath their parent conversation with reuse guidance, tracks parent KV cache decay while subtasks run, and prevents false cold-cache popups.
 - **Accurate Active Work Time**: Uses explicit user messages to define session bounds (30-minute idle bridge, extended to 60 minutes while an agent task is actively running, with zero unattended tail after your last prompt), automatically merging subagents and Git worktrees into parent projects.
-- **Subagent-Aware & Non-Intrusive Alerts**: Detects running subagents and non-daemon background tasks to avoid false cold-cache warnings. Switch notifications appear as silent, non-activating bottom-right cards (`WS_EX_NOACTIVATE` on Windows / non-activating floating overlay on macOS) that never steal focus or play system sounds.
-- **Local Incremental Ledger & Tray / Menu Bar Residency**: Keeps a local ledger (`data/telemetry_ledger.db`, or `~/Library/Application Support/GravityPulse/` for the macOS `.app`) so deleting conversations in Antigravity does not erase historical work time or quota records. Runs quietly in the Windows system tray or macOS menu bar and auto-starts alongside Antigravity.
-- **Bilingual UI (English / 简体中文)**: Automatically matches your OS language on first launch, with instant switching from the top bar (`EN` / `中`) or tray / menu bar.
+- **Non-Intrusive Residency & Local Ledger**: Runs silently in the Windows system tray or macOS menu bar with non-activating bottom-right alerts (`WS_EX_NOACTIVATE` / macOS floating overlay) and a local incremental ledger (`data/telemetry_ledger.db`, or `~/Library/Application Support/GravityPulse/` for macOS `.app`) so deleting chats never erases history.
+- **Built-In Cross-Platform Updater & Bilingual UI**: Optional GitHub Releases update checker with safe in-place updates (Win64 packaged swap preserving `data/`, macOS `.dmg` download & open, and Git dirty-worktree protection for source checkouts), plus instant English / 简体中文 switching.
 
 ---
 
@@ -88,6 +88,7 @@ Click the quota calibration button in the top bar and enter the current remainin
 | `python build.py --watch` | Run the singleton companion watcher that auto-starts GravityPulse when `Antigravity.exe` opens |
 | `python build.py --setup` | Generate `assets/gravitypulse.ico`, create Desktop `GravityPulse.lnk`, and register HKCU startup |
 | `python build.py --uninstall-startup` | Remove the HKCU startup entry |
+| `python build.py --update` | Check GitHub Releases and safely update (preserves `data/`, guards dirty Git trees) |
 | `python build.py --test` | Run the unit test suite |
 | `python build.py --audit` | Run line-budget check, syntax check, and full unit tests |
 
@@ -122,8 +123,8 @@ GravityPulse/
 
 ## Privacy & Security
 
-- **100% Local**: Reads `~/.gemini/antigravity` in read-only mode and writes runtime config/ledger only inside the local `data/` directory.
-- **Zero Telemetry / Network Calls**: GravityPulse makes no outbound HTTP requests.
+- **100% Local Processing**: Reads `~/.gemini/antigravity` in read-only mode and stores runtime config/ledger only inside the local `data/` directory (or `~/Library/Application Support/GravityPulse/` on macOS `.app`).
+- **Zero Telemetry Uploads**: GravityPulse never uploads workspace data, logs, or usage metrics. The only optional outbound request is checking `api.github.com` for new GitHub Releases, which can be disabled in Settings.
 
 ## License
 

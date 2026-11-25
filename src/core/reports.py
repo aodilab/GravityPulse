@@ -5,9 +5,10 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from config.settings import (
-    LOCAL_TZ,
     DEFAULT_ANTIGRAVITY_DIR,
+    DEFAULT_CARBON_MULTIPLIER,
     DEFAULT_GAP_LIMIT,
+    LOCAL_TZ,
     MIN_VISIBLE_DATE,
 )
 from src.core.advisor import (
@@ -19,7 +20,6 @@ from src.core.advisor import (
 )
 from src.core.live_state import live_report_fields
 from src.core.models import (
-    ConversationWork,
     DayReport,
     DialogContextInfo,
     ModelQuotaUsage,
@@ -28,12 +28,12 @@ from src.core.models import (
     QuotaSummary,
     TimeInterval,
     WeekReport,
-    local_day_bounds,
-    local_week_bounds,
     format_compact_hm,
     format_duration,
     format_hms,
     format_tokens,
+    local_day_bounds,
+    local_week_bounds,
 )
 from src.core.ledger import sync_telemetry_ledger
 from src.core.quota import compute_quota_summary
@@ -52,14 +52,14 @@ def compute_day_report(
     quota_config: QuotaConfig | None = None,
     ledger_path: Path | None = None,
 ) -> DayReport:
-    """Compute Beijing-time work report for `target_date` from local Antigravity 2.0 logs."""
+    """Compute local-time work report for `target_date` from local Antigravity 2.0 logs."""
     now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    now_bj = now_utc.astimezone(LOCAL_TZ)
+    now_loc = now_utc.astimezone(LOCAL_TZ)
     if target_date is None:
-        target_date = now_bj.date()
+        target_date = now_loc.date()
 
     day_start, day_end = local_day_bounds(target_date)
-    effective_now = min(now_bj, day_end)
+    effective_now = min(now_loc, day_end)
     meta_map = sync_telemetry_ledger(antigravity_dir, ledger_path=ledger_path)
     sessions = collect_root_sessions(
         antigravity_dir=antigravity_dir,
@@ -67,9 +67,9 @@ def compute_day_report(
         effective_now=effective_now,
         gap_limit=gap_limit,
         meta_map=meta_map,
-        ledger_path=ledger_path,
+        ledger_path=ledger_path, include_active_subtasks=(target_date == now_loc.date()),
     )
-    rep = build_day_from_sessions(target_date, now_bj, sessions, gap_limit=gap_limit)
+    rep = build_day_from_sessions(target_date, now_loc, sessions, gap_limit=gap_limit)
     quota = compute_quota_summary(
         antigravity_dir=antigravity_dir,
         win_start=day_start,
@@ -83,7 +83,7 @@ def compute_day_report(
         antigravity_dir=antigravity_dir,
         win_start=day_start,
         win_end=effective_now,
-        is_active_period=(target_date == now_bj.date()),
+        is_active_period=(target_date == now_loc.date()),
         meta_map=meta_map,
         valid_conv_ids={c.conversation_id for c in rep.conversations},
     )
@@ -108,33 +108,33 @@ def compute_week_report(
     quota_config: QuotaConfig | None = None,
     ledger_path: Path | None = None,
 ) -> WeekReport:
-    """Compute Monday-to-Sunday Beijing-time weekly work report in a single pass."""
+    """Compute Monday-to-Sunday local-time weekly work report in a single pass."""
     now_utc = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
-    now_bj = now_utc.astimezone(LOCAL_TZ)
+    now_loc = now_utc.astimezone(LOCAL_TZ)
     if target_date is None:
-        target_date = now_bj.date()
+        target_date = now_loc.date()
 
     week_start, week_end = local_week_bounds(target_date)
     win_start, _ = local_day_bounds(week_start)
     _, win_end = local_day_bounds(week_end)
-    effective_now = min(now_bj, win_end)
+    effective_now = min(now_loc, win_end)
     meta_map = sync_telemetry_ledger(antigravity_dir, ledger_path=ledger_path)
 
+    is_cur_wk = week_start <= now_loc.date() <= week_end
     sessions = collect_root_sessions(
         antigravity_dir=antigravity_dir,
         min_mtime_ts=win_start.timestamp() - 3600.0,
         effective_now=effective_now,
         gap_limit=gap_limit,
         meta_map=meta_map,
-        ledger_path=ledger_path,
+        ledger_path=ledger_path, include_active_subtasks=is_cur_wk,
     )
 
     days: list[DayReport] = [
-        build_day_from_sessions(week_start + timedelta(days=offset), now_bj, sessions, gap_limit=gap_limit)
+        build_day_from_sessions(week_start + timedelta(days=offset), now_loc, sessions, gap_limit=gap_limit)
         for offset in range(7)
     ]
 
-    is_cur_wk = week_start <= now_bj.date() <= week_end
     _, week_convs, week_projects, running_count = build_period_work(
         win_start,
         win_end,
@@ -163,7 +163,7 @@ def compute_week_report(
     return WeekReport(
         week_start=week_start,
         week_end=week_end,
-        generated_at=now_bj,
+        generated_at=now_loc,
         total_seconds=total_seconds,
         days=tuple(days),
         conversations=week_convs,
@@ -195,7 +195,7 @@ def _model_quota_dict(usage: ModelQuotaUsage | None) -> dict:
 def _serialize_quota_summary(quota: QuotaSummary | None) -> dict:
     if quota is None:
         return {
-            "calibrated": False, "carbon_multiplier": 3.0, "weekly_cap_usd": 0.0, "daily_cap_usd": 0.0,
+            "calibrated": False, "carbon_multiplier": DEFAULT_CARBON_MULTIPLIER, "weekly_cap_usd": 0.0, "daily_cap_usd": 0.0,
             "daily_pct": 0.0, "weekly_pct": 0.0, "carbon_daily_pct": 0.0, "carbon_weekly_pct": 0.0,
             "neon_daily_pct": 0.0, "neon_weekly_pct": 0.0,
             "hydrogen_daily_pct": 0.0, "hydrogen_weekly_pct": 0.0, "other_daily_pct": 0.0, "other_weekly_pct": 0.0,
@@ -256,14 +256,14 @@ def serialize_dialogs(
     now: datetime | None = None,
 ) -> list[dict]:
     """Serialize `DialogContextInfo` items into UI-ready dictionaries."""
-    now_bj = (now or datetime.now(LOCAL_TZ)).astimezone(LOCAL_TZ)
+    now_loc = (now or datetime.now(LOCAL_TZ)).astimezone(LOCAL_TZ)
     out: list[dict] = []
     for d in dialogs:
         ctx = d.context_tokens
         safe_limit = dialog_safe_context_limit(d)
-        cache_state, cache_status_text, cache_idle_text, idle_sec = evaluate_implicit_cache_status(d, now_bj)
+        cache_state, cache_status_text, cache_idle_text, idle_sec = evaluate_implicit_cache_status(d, now_loc)
         advice_key, advice_text, advice_reason, notify_detail = evaluate_dialog_advice_detail(d, cache_state, idle_sec)
-        switch_kind = classify_switch_kind(d, cache_state, idle_sec) if advice_key == "switch" else ""
+        switch_kind = classify_switch_kind(d, cache_state, idle_sec)
         compaction_text = f"已压缩 {d.compaction_count} 次" if d.compaction_count > 0 else "未触发压缩"
         out.append(
             {
@@ -302,7 +302,7 @@ def serialize_dialogs(
                 "user_turn_count": d.user_turn_count,
                 "post_finish_turn_count": d.post_finish_turn_count,
                 "last_user_input_ts": d.last_user_input_ts,
-                "cache_thresholds": d.cache_thresholds,
+                "cache_thresholds": d.cache_thresholds, "project_profile": d.project_profile, "work_phase": d.work_phase, "is_handover_turn": d.is_handover_turn, "is_subdialog": d.is_subdialog, "parent_conversation_id": d.parent_conversation_id, "parent_title": d.parent_title,
             }
         )
     return out
@@ -361,9 +361,9 @@ def _serialize_projects_with_quota(
 
 def week_report_to_dict(report: WeekReport, now: datetime | None = None) -> dict:
     """Serialize a `WeekReport` into JSON-friendly structure for the desktop UI."""
-    now_bj = (now or report.generated_at).astimezone(LOCAL_TZ)
-    today_bj = now_bj.date()
-    is_current_week = report.week_start <= today_bj <= report.week_end
+    now_loc = (now or report.generated_at).astimezone(LOCAL_TZ)
+    today_loc = now_loc.date()
+    is_current_week = report.week_start <= today_loc <= report.week_end
     max_day_sec = max((d.total_seconds for d in report.days), default=1.0) or 1.0
 
     iq_list = report.quota.interval_quotas if report.quota is not None else ()
@@ -373,14 +373,14 @@ def week_report_to_dict(report: WeekReport, now: datetime | None = None) -> dict
         if d.total_seconds > 0:
             active_days += 1
         weekday_cn = "一二三四五六日"[d.target_date.weekday()]
-        is_future = d.target_date > today_bj
+        is_future = d.target_date > today_loc
         iq = iq_list[idx] if (not is_future and idx < len(iq_list)) else None
         days_data.append(
             {
                 "date": d.target_date.isoformat(),
                 "short_date": d.target_date.strftime("%m-%d"),
                 "weekday_cn": f"周{weekday_cn}",
-                "is_today": d.target_date == today_bj,
+                "is_today": d.target_date == today_loc,
                 "is_future": is_future,
                 "total_seconds": int(round(d.total_seconds)),
                 "total_human": format_duration(d.total_seconds, include_seconds=False),
@@ -408,21 +408,21 @@ def week_report_to_dict(report: WeekReport, now: datetime | None = None) -> dict
     projects_data = _serialize_projects_with_quota(report.projects, report.quota, is_current_week, "%m-%d %H:%M")
     avg_seconds = report.total_seconds / max(1, active_days) if active_days > 0 else 0.0
     _, week_end_dt = local_day_bounds(report.week_end)
-    dialog_ref_now = now_bj if is_current_week else min(now_bj, week_end_dt)
+    dialog_ref_now = now_loc if is_current_week else min(now_loc, week_end_dt)
 
-    today_ivs = next((d.merged_intervals for d in report.days if d.target_date == today_bj), ())
-    _, today_end = local_day_bounds(today_bj)
+    today_ivs = next((d.merged_intervals for d in report.days if d.target_date == today_loc), ())
+    _, today_end = local_day_bounds(today_loc)
     return {
         "week_start": report.week_start.isoformat(),
         "week_end": report.week_end.isoformat(),
         "range_label": f"{report.week_start.strftime('%m-%d')} 周一 ~ {report.week_end.strftime('%m-%d')} 周日",
         "is_current_week": is_current_week,
-        "can_prev": True if MIN_VISIBLE_DATE is None else (report.week_start > MIN_VISIBLE_DATE),
-        "can_next": report.week_end < today_bj,
+        "can_prev": MIN_VISIBLE_DATE is None or report.week_start > MIN_VISIBLE_DATE,
+        "can_next": report.week_end < today_loc,
         "total_human": format_duration(report.total_seconds, include_seconds=False),
         "total_hms": format_hms(report.total_seconds),
         "total_seconds": int(round(report.total_seconds)),
-        **live_report_fields(report.total_seconds, is_current_week, report.running_count, today_ivs, report.dialogs, now_bj, today_end),
+        **live_report_fields(report.total_seconds, is_current_week, report.running_count, today_ivs, report.dialogs, now_loc, today_end),
         "active_days": active_days,
         "avg_human": format_duration(avg_seconds, include_seconds=False),
         "running_count": report.running_count if is_current_week else 0,
@@ -439,10 +439,10 @@ def week_report_to_dict(report: WeekReport, now: datetime | None = None) -> dict
 
 def report_to_dict(report: DayReport, now: datetime | None = None) -> dict:
     """Serialize a `DayReport` into JSON-friendly structure for the desktop UI."""
-    now_bj = (now or report.generated_at).astimezone(LOCAL_TZ)
-    is_today = report.target_date == now_bj.date()
+    now_loc = (now or report.generated_at).astimezone(LOCAL_TZ)
+    is_today = report.target_date == now_loc.date()
     day_start, day_end = local_day_bounds(report.target_date)
-    dialog_ref_now = now_bj if is_today else min(now_bj, day_end)
+    dialog_ref_now = now_loc if is_today else min(now_loc, day_end)
     day_seconds = 86400.0
 
     timeline_segments = []
@@ -498,12 +498,12 @@ def report_to_dict(report: DayReport, now: datetime | None = None) -> dict:
         "target_date": report.target_date.isoformat(),
         "weekday_cn": f"周{weekday_cn}",
         "is_today": is_today,
-        "can_prev": True if MIN_VISIBLE_DATE is None else (report.target_date > MIN_VISIBLE_DATE),
-        "can_next": report.target_date < now_bj.date(),
+        "can_prev": MIN_VISIBLE_DATE is None or report.target_date > MIN_VISIBLE_DATE,
+        "can_next": report.target_date < now_loc.date(),
         "total_human": format_duration(report.total_seconds, include_seconds=False),
         "total_hms": format_hms(report.total_seconds),
         "total_seconds": int(round(report.total_seconds)),
-        **live_report_fields(report.total_seconds, is_today, report.running_count, report.merged_intervals, report.dialogs, now_bj, day_end),
+        **live_report_fields(report.total_seconds, is_today, report.running_count, report.merged_intervals, report.dialogs, now_loc, day_end),
         "running_count": report.running_count if is_today else 0,
         "active_span": active_span,
         "interval_count": len(intervals_data),

@@ -48,23 +48,22 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 90), now)[:3], ("expired", "基本失效", "1.5小时前"))
 
         self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 2, model_label="Carbon"), now)[:2], ("fresh", "缓存有效"))
-        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 4, model_label="Carbon"), now)[:2], ("cooling", "缓存衰减"))
-        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 6, model_label="Carbon"), now)[:2], ("decay", "可能失效"))
-        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 9, model_label="Carbon"), now)[:2], ("expired", "基本失效"))
+        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 3, model_label="Carbon"), now)[:2], ("cooling", "缓存衰减"))
+        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 5, model_label="Carbon"), now)[:2], ("decay", "可能失效"))
+        self.assertEqual(evaluate_implicit_cache_status(make_dlg(5000, 50000, 7, model_label="Carbon"), now)[:2], ("expired", "基本失效"))
         self.assertAlmostEqual(make_dlg(5000, 50000, 3).cache_hit_pct, 90.9, places=1)
 
         self.assertEqual(dialog_safe_context_limit(make_dlg(3000, 178000, 1, model_label="Carbon")), 256_000)
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 178000, 1, compactions=0, model_label="Carbon"), "fresh"), ("ok", "状态健康"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(206000, 0, 0, running=True, compactions=1, model_label="Carbon"), "active"), ("ok", "状态健康"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 217000, 9, compactions=1, model_label="Carbon"), "cooling"), ("watch", "临近压缩"))
-        self.assertEqual(evaluate_dialog_advice(make_dlg(2600, 152000, 9, compactions=0, model_label="Carbon"), "expired"), ("switch", "建议换新"))
+        self.assertEqual(evaluate_dialog_advice(make_dlg(2600, 178000, 9, compactions=0, model_label="Carbon"), "expired"), ("switch", "建议换新"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 60000, 2, compactions=3, model_label="Carbon"), "fresh"), ("watch", "注意控制"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 60000, 2, compactions=4, model_label="Carbon"), "fresh"), ("watch", "注意控制"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 60000, 2, compactions=5, model_label="Carbon"), "fresh"), ("switch", "建议换新"))
 
         self.assertEqual(dialog_safe_context_limit(make_dlg(3000, 80000, 2, compactions=0, model_label="Hydrogen")), 256_000)
         self.assertEqual(dialog_safe_context_limit(make_dlg(3000, 80000, 2, compactions=1, model_label="Hydrogen")), 256_000)
-        # 3-turn 207K zero-compaction Hydrogen session (real case `显示效果优化`) stays healthy without false alarm
         self.assertEqual(evaluate_dialog_advice(make_dlg(2543, 204467, 1, compactions=0, model_label="Hydrogen"), "fresh"), ("ok", "状态健康"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 196000, 2, compactions=2, model_label="Hydrogen"), "fresh"), ("ok", "状态健康"))
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 225000, 2, compactions=0, model_label="Hydrogen"), "fresh"), ("watch", "临近压缩"))
@@ -76,21 +75,21 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertEqual(h_adv[:2], ("switch", "建议换新"))
         self.assertIn("4 次", h_adv[3])
         self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 270000, 1, compactions=0, model_label="Hydrogen"), "fresh"), ("switch", "建议换新"))
-        self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 155000, 70, compactions=0, model_label="Hydrogen"), "expired"), ("switch", "建议换新"))
+        self.assertEqual(evaluate_dialog_advice(make_dlg(3000, 180000, 70, compactions=0, model_label="Hydrogen"), "expired"), ("switch", "建议换新"))
 
     def test_empirical_cache_threshold_learning(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            now_bj = datetime(2026, 11, 16, 0, 50, tzinfo=LOCAL_TZ)
-            base_th = learn_empirical_cache_thresholds(root, now_bj)
-            self.assertEqual(base_th["Carbon"], (180, 300, 480))
+            now_loc = datetime(2026, 11, 16, 0, 50, tzinfo=LOCAL_TZ)
+            base_th = learn_empirical_cache_thresholds(root, now_loc)
+            self.assertEqual(base_th["Carbon"], (180, 240, 360))
             self.assertEqual(base_th["Hydrogen"], (300, 900, 1200))
 
             conv_db = root / "conversations" / "learn1.db"
             conv_db.parent.mkdir(parents=True, exist_ok=True)
             cc = sqlite3.connect(conv_db)
             cc.execute("CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB)")
-            t_cur = int((now_bj - timedelta(hours=6)).timestamp())
+            t_cur = int((now_loc - timedelta(hours=6)).timestamp())
             rows = [(0, 15, make_step_meta(t_cur, 1437, 50_000, 500, 0))]
             for i in range(1, 16):
                 t_cur += 240 if i % 2 == 1 else 480
@@ -99,7 +98,7 @@ class TestAdvisorAndAlerts(unittest.TestCase):
             cc.commit()
             cc.close()
 
-            adapted_th = learn_empirical_cache_thresholds(root, now_bj)
+            adapted_th = learn_empirical_cache_thresholds(root, now_loc)
             self.assertGreaterEqual(adapted_th["Carbon"][0], 600)
 
     def test_decay_no_premature_switch_and_other_model_label(self) -> None:
@@ -122,8 +121,8 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertIn("第5次压缩", adv_pre5[2])
 
         h_decay = DialogContextInfo(
-            conversation_id="hd1", title="视频剪辑", workspace="demo_web", model_label="Hydrogen",
-            is_running=False, input_tokens=3000, cache_read_tokens=162_000,
+            conversation_id="hd1", title="构建流水线", workspace="demo_web", model_label="Hydrogen",
+            is_running=False, input_tokens=3000, cache_read_tokens=192_000,
             output_tokens=1000, thinking_tokens=400, last_active=now - timedelta(minutes=12), compaction_count=0,
         )
         self.assertEqual(evaluate_dialog_advice(h_decay, "decay"), ("watch", "注意控制"))
@@ -179,42 +178,43 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertNotIn("二次提醒", seed_cc_alert[1])
 
         # 2) Mid-run overflow: alert #1 on cross, silent < +50K, alert #2 at +50K, silent thereafter in same turn
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", advice_key="ok", is_running=True, cc=0, ctx=240_000)]))
-        alert1 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=0, ctx=340_000, user_turn_count=5, post_finish_turn_count=4)])
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", advice_key="ok", is_running=True, cc=0, ctx=240_000)]))
+        alert1 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=0, ctx=340_000, user_turn_count=5, post_finish_turn_count=4)])
         self.assertIsNotNone(alert1)
-        self.assertIn("上线排查5", alert1[0])
+        self.assertIn("服务排查", alert1[0])
         self.assertNotIn("二次提醒", alert1[1])
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=0, ctx=389_000, user_turn_count=5, post_finish_turn_count=4)]))
-        alert2 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=0, ctx=395_000, user_turn_count=5, post_finish_turn_count=4)])
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=0, ctx=389_000, user_turn_count=5, post_finish_turn_count=4)]))
+        alert2 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=0, ctx=395_000, user_turn_count=5, post_finish_turn_count=4)])
         self.assertIsNotNone(alert2)
         self.assertIn("二次提醒", alert2[1])
         self.assertIn("+55.0K", alert2[1])
-        self.assertNotIn("当前 395K", alert2[1])  # already present in base detail
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=0, ctx=460_000, user_turn_count=5, post_finish_turn_count=4)]))
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=False, cc=0, ctx=470_000, cache_state="fresh", idle_seconds=8, user_turn_count=5, post_finish_turn_count=4)]))
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=False, cc=0, ctx=470_000, cache_state="expired", idle_seconds=2000, user_turn_count=5, post_finish_turn_count=4)]))
+        self.assertNotIn("当前 395K", alert2[1])
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=0, ctx=460_000, user_turn_count=5, post_finish_turn_count=4)]))
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=False, cc=0, ctx=470_000, cache_state="fresh", idle_seconds=8, user_turn_count=5, post_finish_turn_count=4)]))
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=False, cc=0, ctx=470_000, cache_state="expired", idle_seconds=2000, user_turn_count=5, post_finish_turn_count=4)]))
 
         # 3) New compaction mid-run resets round: alert #1 on compaction + alert #2 on +50K growth, then capped
-        alert_cc1 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=180_000, user_turn_count=5, post_finish_turn_count=4)])
+        alert_cc1 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=180_000, user_turn_count=5, post_finish_turn_count=4)])
         self.assertIsNotNone(alert_cc1)
         self.assertNotIn("二次提醒", alert_cc1[1])
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=220_000, user_turn_count=5, post_finish_turn_count=4)]))
-        alert_cc2 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=232_000, user_turn_count=5, post_finish_turn_count=4)])
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=220_000, user_turn_count=5, post_finish_turn_count=4)]))
+        alert_cc2 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=232_000, user_turn_count=5, post_finish_turn_count=4)])
         self.assertIsNotNone(alert_cc2)
         self.assertIn("二次提醒", alert_cc2[1])
         self.assertIn("+52.0K", alert_cc2[1])
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=295_000, user_turn_count=5, post_finish_turn_count=4)]))
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=295_000, user_turn_count=5, post_finish_turn_count=4)]))
 
-        # 4) New user turn resets round: alert #1 on turn start + alert #2 at +50K, then capped
-        alert_t1 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=240_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)])
+        # 4) Quick follow-up turn (<30K growth) stays silent; heavy new user turn (>=30K) resets round + alert #2 at +50K
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=240_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
+        alert_t1 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=265_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)])
         self.assertIsNotNone(alert_t1)
         self.assertNotIn("二次提醒", alert_t1[1])
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=280_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
-        alert_t2 = tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=290_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)])
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=305_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
+        alert_t2 = tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=316_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)])
         self.assertIsNotNone(alert_t2)
         self.assertIn("二次提醒", alert_t2[1])
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=True, cc=1, ctx=355_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
-        self.assertIsNone(tracker.process([make_dlg("m5", "上线排查5", is_running=False, cc=1, ctx=360_000, cache_state="fresh", idle_seconds=6, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=True, cc=1, ctx=375_000, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
+        self.assertIsNone(tracker.process([make_dlg("m5", "服务排查", is_running=False, cc=1, ctx=380_000, cache_state="fresh", idle_seconds=6, user_turn_count=6, post_finish_turn_count=5, last_user_input_ts=3100.0)]))
 
         # 5) Cold-cache -> structural upgrade starts a fresh 2-alert cycle; stale idle structural skips #2
         up_cache = tracker.process([make_dlg("c_up", "升级测试", switch_kind="cache", is_running=False, cc=0, ctx=180_000, cache_state="expired", idle_seconds=600)])
@@ -229,16 +229,29 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertIn("二次提醒", up_s2[1])
         self.assertIsNone(tracker.process([make_dlg("c_up", "升级测试", switch_kind="structural", is_running=True, cc=0, ctx=470_000)]))
 
-        # Verify advisor notify_detail mentions pausing when is_running=True
-        now_bj = datetime(2026, 11, 20, 2, 15, 0, tzinfo=LOCAL_TZ)
+        # Verify running Carbon @ 512K stays quiet ("停顿换新") at 260K-399K and fires Step-2 safety-net at >=400K
+        now_loc = datetime(2026, 11, 20, 2, 15, 0, tzinfo=LOCAL_TZ)
+        running_mid = DialogContextInfo(
+            conversation_id="run_mid", title="复盘", workspace="demo_app", model_label="Carbon",
+            is_running=True, input_tokens=5_000, cache_read_tokens=335_000,
+            output_tokens=800, thinking_tokens=200, last_active=now_loc, compaction_count=0,
+            context_limit=512_000, work_phase="exploring",
+        )
+        adv_mid = evaluate_dialog_advice_detail(running_mid, "active", 0)
+        self.assertEqual(adv_mid[:2], ("watch", "停顿换新"))
+        self.assertIn("停顿后换新", adv_mid[2])
+        self.assertEqual(classify_switch_kind(running_mid, "active", 0), "zone_armed")
         running_over = DialogContextInfo(
             conversation_id="run_over", title="复盘", workspace="demo_app", model_label="Carbon",
-            is_running=True, input_tokens=5_000, cache_read_tokens=335_000,
-            output_tokens=800, thinking_tokens=200, last_active=now_bj, compaction_count=0, context_limit=512_000,
+            is_running=True, input_tokens=5_000, cache_read_tokens=400_000,
+            output_tokens=800, thinking_tokens=200, last_active=now_loc, compaction_count=0,
+            context_limit=512_000, work_phase="editing",
         )
         adv_run = evaluate_dialog_advice_detail(running_over, "active", 0)
         self.assertEqual(adv_run[:2], ("switch", "建议换新"))
-        self.assertIn("暂停并新建对话框", adv_run[3])
+        self.assertIn("压缩", adv_run[2])
+        self.assertIn("交接", adv_run[3])
+        self.assertEqual(classify_switch_kind(running_over, "active", 0), "critical")
 
     def test_cold_cache_vs_new_window_breakeven_and_single_alert(self) -> None:
         now = datetime(2026, 11, 16, 3, 10, 0, tzinfo=LOCAL_TZ)
@@ -258,25 +271,28 @@ class TestAdvisorAndAlerts(unittest.TestCase):
         self.assertEqual(adv_c_short[:2], ("ok", "状态健康"))
         self.assertIn("续聊更省", adv_c_short[2])
 
-        c_mid = make_dlg("cm", "Carbon", 120_000, 22)
-        self.assertEqual(evaluate_dialog_advice_detail(c_mid, "expired", 22 * 60)[:2], ("watch", "注意控制"))
+        c_mid = make_dlg("cm", "Carbon", 155_000, 22)
+        adv_c_mid = evaluate_dialog_advice_detail(c_mid, "expired", 22 * 60)
+        self.assertEqual(adv_c_mid[:2], ("watch", "可考虑换新"))
+        self.assertIn("可考虑换新", adv_c_mid[3])
+        self.assertEqual(classify_switch_kind(c_mid, "expired", 22 * 60), "gentle_cache")
 
-        c_long = make_dlg("cl", "Carbon", 180_000, 9)
+        c_long = make_dlg("cl", "Carbon", 190_000, 9)
         be_c_long = evaluate_cold_cache_breakeven(c_long, "expired", 9 * 60)
         self.assertTrue(be_c_long["should_switch"])
-        self.assertGreater(be_c_long["ratio"], 1.5)
+        self.assertGreater(be_c_long["ratio"], 1.35)
         adv_c_long = evaluate_dialog_advice_detail(c_long, "expired", 9 * 60)
         self.assertEqual(adv_c_long[:2], ("switch", "建议换新"))
         self.assertIn("x", adv_c_long[2])
 
-        self.assertEqual(evaluate_dialog_advice(make_dlg("hs", "Hydrogen", 65_000, 25), "expired"), ("ok", "状态健康"))
-        self.assertEqual(evaluate_dialog_advice(make_dlg("hm", "Hydrogen", 115_000, 25), "expired"), ("watch", "注意控制"))
-        self.assertEqual(evaluate_dialog_advice(make_dlg("hl", "Hydrogen", 160_000, 25), "expired"), ("switch", "建议换新"))
-        self.assertNotEqual(evaluate_dialog_advice(make_dlg("os", "其他", 90_000, 35), "expired")[0], "switch")
-        self.assertEqual(evaluate_dialog_advice(make_dlg("ol", "其他", 155_000, 35), "expired"), ("switch", "建议换新"))
+        self.assertEqual(evaluate_dialog_advice(make_dlg("hs", "Hydrogen", 95_000, 25), "expired"), ("ok", "状态健康"))
+        self.assertEqual(evaluate_dialog_advice(make_dlg("hm", "Hydrogen", 150_000, 25), "expired"), ("watch", "可考虑换新"))
+        self.assertEqual(evaluate_dialog_advice(make_dlg("hl", "Hydrogen", 185_000, 25), "expired"), ("switch", "建议换新"))
+        self.assertNotEqual(evaluate_dialog_advice(make_dlg("os", "其他", 100_000, 35), "expired")[0], "switch")
+        self.assertEqual(evaluate_dialog_advice(make_dlg("ol", "其他", 175_000, 35), "expired"), ("switch", "建议换新"))
 
         tracker = SwitchAlertTracker()
-        d_a_fresh = make_dlg("da", "Carbon", 180_000, 2)
+        d_a_fresh = make_dlg("da", "Carbon", 190_000, 2)
         d_b_run = DialogContextInfo(
             conversation_id="db", title="并行运行窗口", workspace="demo_web", model_label="Carbon",
             is_running=True, input_tokens=3_000, cache_read_tokens=47_000,
@@ -305,7 +321,7 @@ class TestAdvisorAndAlerts(unittest.TestCase):
             init_summary_db(
                 root,
                 [
-                    ("p7", "上线排查7", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_IDLE", "", 0, local_utc_sql(2026, 11, 16, 3, 2, 34), local_utc_sql(2026, 11, 16, 2, 40, 0)),
+                    ("p7", "并发任务排查", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_IDLE", "", 0, local_utc_sql(2026, 11, 16, 3, 2, 34), local_utc_sql(2026, 11, 16, 2, 40, 0)),
                     ("sub1", "", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_RUNNING", "p7", 1, local_utc_sql(2026, 11, 16, 3, 19, 0), None),
                     ("sub2", "", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_RUNNING", "p7", 1, local_utc_sql(2026, 11, 16, 3, 19, 10), None),
                     ("bg_conv", "自动化回归", '["file:///c%3A/Work/demo_web"]', "CASCADE_RUN_STATUS_IDLE", "", 0, local_utc_sql(2026, 11, 16, 3, 1, 0), local_utc_sql(2026, 11, 16, 3, 0, 0)),
@@ -342,17 +358,23 @@ class TestAdvisorAndAlerts(unittest.TestCase):
             tracker = SwitchAlertTracker()
             t_early = datetime(2026, 11, 16, 3, 5, 0, tzinfo=LOCAL_TZ)
             rep_early = compute_day_report(target_date=date(2026, 11, 16), antigravity_dir=root, now=t_early)
-            self.assertIsNone(tracker.process(report_to_dict(rep_early, now=t_early)["dialogs"]))
+            early_map = {d["conversation_id"]: d for d in report_to_dict(rep_early, now=t_early)["dialogs"]}
+            self.assertEqual(early_map["p7"]["cache_state"], "fresh")
+            self.assertEqual(early_map["p7"]["cache_status_text"], "主缓有效")
+            self.assertIn("子任务 2", early_map["p7"]["cache_idle_text"])
+            self.assertIsNone(tracker.process(list(early_map.values())))
 
             now_17m = datetime(2026, 11, 16, 3, 20, 0, tzinfo=LOCAL_TZ)
             rep_17m = compute_day_report(target_date=date(2026, 11, 16), antigravity_dir=root, now=now_17m)
             self.assertEqual(rep_17m.running_count, 2)
             d_map = {d["conversation_id"]: d for d in report_to_dict(rep_17m, now=now_17m)["dialogs"]}
             self.assertTrue(d_map["p7"]["is_running"])
-            self.assertEqual(d_map["p7"]["cache_state"], "active")
-            self.assertEqual(d_map["p7"]["cache_status_text"], "子任务运行")
-            self.assertIn("主缓已冷", d_map["p7"]["cache_idle_text"])
+            self.assertEqual(d_map["p7"]["cache_state"], "expired")
+            self.assertEqual(d_map["p7"]["cache_status_text"], "主缓已冷")
+            self.assertIn("子任务 2", d_map["p7"]["cache_idle_text"])
+            self.assertIn("17分钟前", d_map["p7"]["cache_idle_text"])
             self.assertEqual(d_map["p7"]["advice_key"], "ok")
+            self.assertIsNone(tracker.process(list(d_map.values())))
 
             self.assertTrue(d_map["bg_conv"]["is_running"])
             self.assertEqual(d_map["bg_conv"]["advice_key"], "ok")
@@ -379,7 +401,7 @@ class TestAdvisorAndAlerts(unittest.TestCase):
             root = Path(tmp)
             init_summary_db(
                 root,
-                [("c512", "上线排查10", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_RUNNING", "", 0, local_utc_sql(2026, 11, 16, 16, 13, 0), local_utc_sql(2026, 11, 16, 16, 0, 0))],
+                [("c512", "模块排查", '["file:///c%3A/Work/demo_app"]', "CASCADE_RUN_STATUS_RUNNING", "", 0, local_utc_sql(2026, 11, 16, 16, 13, 0), local_utc_sql(2026, 11, 16, 16, 0, 0))],
             )
             conv_db = root / "conversations" / "c512.db"
             conv_db.parent.mkdir(parents=True, exist_ok=True)
@@ -405,16 +427,16 @@ class TestAdvisorAndAlerts(unittest.TestCase):
             cc.commit()
             cc.close()
 
-            now_bj = datetime(2026, 11, 16, 16, 4, 0, tzinfo=LOCAL_TZ)
-            rep = compute_day_report(target_date=date(2026, 11, 16), antigravity_dir=root, now=now_bj)
-            dlgs = report_to_dict(rep, now=now_bj)["dialogs"]
+            now_loc = datetime(2026, 11, 16, 16, 4, 0, tzinfo=LOCAL_TZ)
+            rep = compute_day_report(target_date=date(2026, 11, 16), antigravity_dir=root, now=now_loc)
+            dlgs = report_to_dict(rep, now=now_loc)["dialogs"]
             self.assertEqual(len(dlgs), 1)
             d0 = dlgs[0]
             self.assertEqual(d0["safe_limit"], 512_000)
             self.assertEqual(d0["safe_limit_fmt"], "512K")
             self.assertEqual(d0["safe_pct"], 59)
-            self.assertEqual(d0["advice_key"], "ok")
-            self.assertEqual(d0["advice_text"], "状态健康")
+            self.assertEqual(d0["advice_key"], "watch")
+            self.assertEqual(d0["advice_text"], "停顿换新")
 
     def test_512k_adaptive_compaction_thresholds_and_breakeven_drag(self) -> None:
         now = datetime(2026, 11, 16, 17, 0, 0, tzinfo=LOCAL_TZ)
@@ -427,25 +449,29 @@ class TestAdvisorAndAlerts(unittest.TestCase):
                 compaction_count=cc, context_limit=lim,
             )
 
-        # Carbon @ 512K: <260K cc=0 ok, 260K~329K cc=0 watch, >=330K or cc>=1 switch
-        self.assertEqual(evaluate_dialog_advice(dlg_512("Carbon", 240_000, 0), "fresh"), ("ok", "状态健康"))
-        c_w_ctx = evaluate_dialog_advice_detail(dlg_512("Carbon", 285_000, 0), "fresh")
-        self.assertEqual(c_w_ctx[:2], ("watch", "注意控制"))
-        self.assertNotIn("临近第1次压缩", c_w_ctx[2])
-        c_sw_ctx = evaluate_dialog_advice_detail(dlg_512("Carbon", 340_000, 0), "fresh")
+        # Carbon @ 512K (idle): <220K ok, 220K~259K quiet watch, >=260K Step-1 pause switch, >=400K or cc>=1 Step-2
+        self.assertEqual(evaluate_dialog_advice(dlg_512("Carbon", 190_000, 0), "fresh"), ("ok", "状态健康"))
+        c_w_ctx = evaluate_dialog_advice_detail(dlg_512("Carbon", 240_000, 0), "fresh")
+        self.assertEqual(c_w_ctx[:2], ("watch", "可考虑换新"))
+        self.assertEqual(classify_switch_kind(dlg_512("Carbon", 240_000, 0), "fresh"), "zone")
+        c_sw_ctx = evaluate_dialog_advice_detail(dlg_512("Carbon", 270_000, 0), "fresh")
         self.assertEqual(c_sw_ctx[:2], ("switch", "建议换新"))
-        self.assertEqual(classify_switch_kind(dlg_512("Carbon", 340_000, 0), "fresh"), "structural")
+        self.assertEqual(classify_switch_kind(dlg_512("Carbon", 270_000, 0), "fresh"), "structural")
+        c_crit = evaluate_dialog_advice_detail(dlg_512("Carbon", 405_000, 0), "fresh")
+        self.assertEqual(c_crit[:2], ("switch", "建议换新"))
+        self.assertEqual(classify_switch_kind(dlg_512("Carbon", 405_000, 0), "fresh"), "critical")
         c_sw_cc1 = evaluate_dialog_advice_detail(dlg_512("Carbon", 180_000, 1), "fresh")
         self.assertEqual(c_sw_cc1[:2], ("switch", "建议换新"))
         self.assertEqual(classify_switch_kind(dlg_512("Carbon", 180_000, 1), "fresh"), "structural")
 
-        # Hydrogen @ 512K: <320K cc=0 ok, 320K~399K cc=0 watch, >=400K or cc>=1 switch
-        self.assertEqual(evaluate_dialog_advice(dlg_512("Hydrogen", 300_000, 0), "fresh"), ("ok", "状态健康"))
-        h_w_ctx = evaluate_dialog_advice_detail(dlg_512("Hydrogen", 350_000, 0), "fresh")
-        self.assertEqual(h_w_ctx[:2], ("watch", "注意控制"))
-        h_sw_ctx = evaluate_dialog_advice_detail(dlg_512("Hydrogen", 410_000, 0), "fresh")
+        # Hydrogen @ 512K (idle): <160K ok, 160K~189K quiet watch, >=190K Step-1 pause switch, >=450K or cc>=1 Step-2
+        self.assertEqual(evaluate_dialog_advice(dlg_512("Hydrogen", 150_000, 0), "fresh"), ("ok", "状态健康"))
+        h_w_ctx = evaluate_dialog_advice_detail(dlg_512("Hydrogen", 175_000, 0), "fresh")
+        self.assertEqual(h_w_ctx[:2], ("watch", "可考虑换新"))
+        self.assertEqual(classify_switch_kind(dlg_512("Hydrogen", 175_000, 0), "fresh"), "zone")
+        h_sw_ctx = evaluate_dialog_advice_detail(dlg_512("Hydrogen", 200_000, 0), "fresh")
         self.assertEqual(h_sw_ctx[:2], ("switch", "建议换新"))
-        self.assertEqual(classify_switch_kind(dlg_512("Hydrogen", 410_000, 0), "fresh"), "structural")
+        self.assertEqual(classify_switch_kind(dlg_512("Hydrogen", 200_000, 0), "fresh"), "structural")
         h_sw_cc1 = evaluate_dialog_advice_detail(dlg_512("Hydrogen", 120_000, 1), "fresh")
         self.assertEqual(h_sw_cc1[:2], ("switch", "建议换新"))
         self.assertEqual(classify_switch_kind(dlg_512("Hydrogen", 120_000, 1), "fresh"), "structural")

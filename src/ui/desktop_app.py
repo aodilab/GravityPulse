@@ -26,6 +26,7 @@ from src.ui.live_sync import LiveSyncMixin
 from src.ui.modals import ModalMixin
 from src.ui.system_tray import SystemTrayIcon
 from src.ui.table_views import TableViewsMixin
+from src.ui.updater_ui import UpdaterUiMixin
 
 if IS_WINDOWS:
     from ctypes import wintypes
@@ -44,7 +45,7 @@ def _init_platform_shell() -> None:
         pass
 
 
-class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, LiveSyncMixin):
+class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, LiveSyncMixin, UpdaterUiMixin):
     """Native desktop GravityPulse dashboard with tray residency and zero-jump auto-refresh."""
 
     def __init__(
@@ -71,7 +72,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             self.scale = max(1.0, self.root.winfo_fpixels("1i") / 96.0)
 
         self.win_w = self.px(960)
-        self.win_h = self.px(764)
+        self.win_h = self.px(776)
         self.content_w = self.px(896)
         self.shadow_pad = self.px(12)
 
@@ -86,10 +87,10 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             except tk.TclError:
                 pass
 
-        today_bj = datetime.now(LOCAL_TZ).date()
+        today_loc = datetime.now(LOCAL_TZ).date()
         self.view_mode: str = "day"
-        self.selected_date: date = today_bj
-        self.selected_week_date: date = today_bj
+        self.selected_date: date = today_loc
+        self.selected_week_date: date = today_loc
         self._follow_today: bool = True
         self._follow_current_week: bool = True
         self.day_tab: str = "ctx"
@@ -128,6 +129,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._widget_cache: dict[tuple[int, str], object] = {}
         self._canvas_item_cache: dict[tuple[int, int, str], object] = {}
         self._today_btn_packed: bool = False
+        self._update_btn_packed: bool = False
         self._last_viz_sig: object = None
         self._last_head_sig: object = None
         self._last_rows_sig: object = None
@@ -163,6 +165,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._schedule_dialog_monitor()
         self._schedule_ipc_poll()
         self._start_live_loops()
+        self._init_updater()
 
     def _on_mode_click(self, event: tk.Event) -> None:
         cw = self.px(102)
@@ -183,15 +186,15 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             self._go_current()
 
     def _shift_period(self, delta: int) -> None:
-        today_bj = datetime.now(LOCAL_TZ).date()
+        today_loc = datetime.now(LOCAL_TZ).date()
         if self.view_mode == "day":
             target = self.selected_date + timedelta(days=delta)
-            if (MIN_VISIBLE_DATE is not None and target < MIN_VISIBLE_DATE) or target > today_bj:
+            if (MIN_VISIBLE_DATE is not None and target < MIN_VISIBLE_DATE) or target > today_loc:
                 return
             self.selected_date = target
-            self._follow_today = target == today_bj
+            self._follow_today = target == today_loc
         else:
-            cur_mon, _ = local_week_bounds(today_bj)
+            cur_mon, _ = local_week_bounds(today_loc)
             target_mon, _ = local_week_bounds(self.selected_week_date + timedelta(days=7 * delta))
             if (MIN_VISIBLE_DATE is not None and target_mon < MIN_VISIBLE_DATE) or target_mon > cur_mon:
                 return
@@ -200,19 +203,19 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self.refresh(force_recompute=False, schedule_next=False)
 
     def _go_current(self) -> None:
-        today_bj = datetime.now(LOCAL_TZ).date()
+        today_loc = datetime.now(LOCAL_TZ).date()
         if self.view_mode == "day":
             self._follow_today = True
-            if self.selected_date == today_bj:
+            if self.selected_date == today_loc:
                 return
-            self.selected_date = today_bj
+            self.selected_date = today_loc
         else:
-            cur_mon, _ = local_week_bounds(today_bj)
+            cur_mon, _ = local_week_bounds(today_loc)
             sel_mon, _ = local_week_bounds(self.selected_week_date)
             self._follow_current_week = True
             if sel_mon == cur_mon:
                 return
-            self.selected_week_date = today_bj
+            self.selected_week_date = today_loc
         self.refresh(force_recompute=False, schedule_next=False)
 
     def _on_tab_select(self, tab_idx: int) -> None:
@@ -226,62 +229,48 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
     def refresh(self, force_recompute: bool = True, schedule_next: bool = False) -> None:
         if force_recompute and not self._window_visible and self._hot_reload_if_code_updated(show_ui=False):
             return
-        today_bj = datetime.now(LOCAL_TZ).date()
+        today_loc = datetime.now(LOCAL_TZ).date()
         if self._follow_today:
-            self.selected_date = today_bj
+            self.selected_date = today_loc
         if self._follow_current_week:
-            self.selected_week_date = today_bj
+            self.selected_week_date = today_loc
 
         if force_recompute:
-            self._day_cache.clear()
-            self._week_cache.clear()
+            self._prepare_force_recompute(today_loc)
 
         if schedule_next or self._after_id is None:
             if self._after_id is not None:
                 self.root.after_cancel(self._after_id)
-            self._after_id = self.root.after(REFRESH_MS, lambda: self.refresh(force_recompute=True, schedule_next=True))
+            self._after_id = self.root.after(REFRESH_MS, self._on_auto_refresh_tick)
 
-        now_mono = time.monotonic()
-        if self.view_mode == "day" and not force_recompute:
-            cached = self._day_cache.get(self.selected_date)
-            if cached is not None:
-                fetched_at, payload = cached
-                if self.selected_date < today_bj or (now_mono - fetched_at) <= 15.0:
-                    self._apply_payload(payload, preserve_scroll=False, anchor_mono=fetched_at)
-                    self._finish_loading_transition()
-                    return
-
-        if self.view_mode == "week" and not force_recompute:
-            wk_mon, _ = local_week_bounds(self.selected_week_date)
-            cur_mon, _ = local_week_bounds(today_bj)
-            cached_wk = self._week_cache.get(wk_mon)
-            if cached_wk is not None:
-                fetched_at, payload = cached_wk
-                if wk_mon < cur_mon or (now_mono - fetched_at) <= 15.0:
-                    self._apply_payload(payload, preserve_scroll=False, anchor_mono=fetched_at)
-                    self._finish_loading_transition()
-                    return
+        if not force_recompute and self._try_serve_cached_view(today_loc):
+            return
 
         self._request_seq += 1
         req_id = self._request_seq
+        self._refresh_inflight = True
+        if not force_recompute:
+            self._preview_period_selection()
         mode = self.view_mode
         day_target = self.selected_date
         week_target = self.selected_week_date
         preserve_scroll = force_recompute and self._current_payload is not None
-        if force_recompute:
-            self._quota_cfg = load_quota_config()
         q_cfg = self._quota_cfg
 
         def worker() -> None:
-            fp = compute_telemetry_fingerprint(DEFAULT_ANTIGRAVITY_DIR) if force_recompute else None
-            snap_mono = time.monotonic()
-            if mode == "day":
-                payload = report_to_dict(compute_day_report(target_date=day_target, quota_config=q_cfg))
-                payload["mode"] = "day"
-            else:
-                wk_rep = compute_week_report(target_date=week_target, quota_config=q_cfg)
-                payload = week_report_to_dict(wk_rep)
-                payload["mode"] = "week"
+            try:
+                fp = compute_telemetry_fingerprint(DEFAULT_ANTIGRAVITY_DIR) if force_recompute else None
+                snap_mono = time.monotonic()
+                if mode == "day":
+                    payload = report_to_dict(compute_day_report(target_date=day_target, quota_config=q_cfg))
+                    payload["mode"] = "day"
+                else:
+                    wk_rep = compute_week_report(target_date=week_target, quota_config=q_cfg)
+                    payload = week_report_to_dict(wk_rep)
+                    payload["mode"] = "week"
+            except Exception:
+                self.root.after(0, lambda: setattr(self, "_refresh_inflight", False) if req_id == self._request_seq else None)
+                return
             try:
                 self.root.after(0, lambda: self._on_worker_done(req_id, payload, preserve_scroll, fp, snap_mono))
             except Exception:
@@ -294,9 +283,10 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
     ) -> None:
         if req_id != self._request_seq:
             return
+        self._refresh_inflight = False
         if fp is not None:
             self._last_telemetry_fp = fp
-        today_bj = datetime.now(LOCAL_TZ).date()
+        today_loc = datetime.now(LOCAL_TZ).date()
         anchor_mono = snap_mono if snap_mono is not None else time.monotonic()
         if payload["mode"] == "day":
             self._day_cache[date.fromisoformat(payload["target_date"])] = (anchor_mono, payload)
@@ -305,11 +295,12 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
 
         self._apply_payload(payload, preserve_scroll=preserve_scroll, anchor_mono=anchor_mono)
         self._finish_loading_transition()
+        self._consume_pending_live_refresh(today_loc)
 
         if payload["mode"] == "day" and payload.get("is_today"):
-            yday = today_bj - timedelta(days=1)
+            yday = today_loc - timedelta(days=1)
             need_yday = (MIN_VISIBLE_DATE is None or yday >= MIN_VISIBLE_DATE) and yday not in self._day_cache
-            cur_mon, _ = local_week_bounds(today_bj)
+            cur_mon, _ = local_week_bounds(today_loc)
             if (need_yday or cur_mon not in self._week_cache) and self._prefetch_after_id is None:
                 q_cfg = self._quota_cfg
 
@@ -326,7 +317,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
                             except Exception:
                                 return
                         if cur_mon not in self._week_cache:
-                            wp = week_report_to_dict(compute_week_report(target_date=today_bj, quota_config=q_cfg))
+                            wp = week_report_to_dict(compute_week_report(target_date=today_loc, quota_config=q_cfg))
                             wp["mode"] = "week"
                             t_done = time.monotonic()
                             try:
@@ -361,15 +352,15 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
         self._schedule_dialog_monitor()
 
         def bg_check() -> None:
-            now_bj = datetime.now(LOCAL_TZ)
-            day_start, _ = local_day_bounds(now_bj.date())
+            now_loc = datetime.now(LOCAL_TZ)
+            day_start, _ = local_day_bounds(now_loc.date())
             meta_map = sync_telemetry_ledger(DEFAULT_ANTIGRAVITY_DIR)
             raw_dialogs = collect_dialog_contexts(
-                DEFAULT_ANTIGRAVITY_DIR, day_start, now_bj, is_active_period=True, meta_map=meta_map,
+                DEFAULT_ANTIGRAVITY_DIR, day_start, now_loc, is_active_period=True, meta_map=meta_map,
             )
-            serialized = serialize_dialogs(raw_dialogs, "%H:%M:%S", now=now_bj)
+            serialized = serialize_dialogs(raw_dialogs, "%H:%M:%S", now=now_loc)
             try:
-                self.root.after(0, lambda s=serialized, u=now_bj.strftime("%H:%M:%S"): self._on_monitor_done(s, u))
+                self.root.after(0, lambda s=serialized, u=now_loc.strftime("%H:%M:%S"): self._on_monitor_done(s, u))
             except Exception:
                 pass
 
@@ -385,10 +376,10 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
                 self._render_tabs_and_rows(cur, preserve_scroll=True)
 
     def _process_switch_notifications(self, dialogs: list[dict]) -> None:
-        pending_alert = self._alert_tracker.process(dialogs, notify_enabled=self._quota_cfg.notify_switch)
-        if pending_alert is not None:
-            head, detail = localize_toast(pending_alert[0], pending_alert[1], self._lang)
-            self._show_switch_toast(head, detail)
+        alerts = self._alert_tracker.process_batch_with_kind(dialogs, notify_enabled=self._quota_cfg.notify_switch)
+        if alerts:
+            localized = [(*localize_toast(h, d, self._lang), is_z) for h, d, is_z in alerts]
+            self._enqueue_switch_alerts(localized)
 
     def show_window(self) -> None:
         """Restore resident window from system tray / menu bar with smooth spinner + fade transition."""
@@ -446,6 +437,8 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
                     self.refresh(force_recompute=True, schedule_next=True)
                 else:
                     self.show_window()
+            elif cmd == "check_update":
+                self._open_update_dialog(force_check=True)
             elif cmd == "quit":
                 self._quit_completely()
                 return
@@ -471,6 +464,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             except Exception:
                 pass
             self._calib_win = None
+        self._close_update_window()
         try:
             self.root.attributes("-topmost", False)
             self.root.attributes("-alpha", 1.0)
@@ -487,6 +481,7 @@ class GravityPulseApp(LayoutMixin, HeroViewMixin, TableViewsMixin, ModalMixin, L
             pass
         self._dismiss_toast()
         self._stop_live_loops()
+        self._stop_updater()
         for attr in (
             "_after_id", "_monitor_after_id", "_ipc_after_id", "_prefetch_after_id",
             "_topmost_after_id", "_fade_after_id", "_spinner_after_id", "_reveal_after_id",

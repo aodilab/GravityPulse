@@ -1,7 +1,135 @@
 """Anti-aliased Apple-Neo UI primitives rendered with Pillow for high-DPI Tkinter."""
 from __future__ import annotations
 
+import tkinter as tk
+from typing import Callable
+
 from PIL import Image, ImageDraw, ImageFilter, ImageTk
+
+from config.settings import IS_MACOS
+
+
+class FlatDialogButton(tk.Label):
+    """macOS-safe flat button honoring explicit `bg`/`fg` in both Light and Dark Aqua modes."""
+
+    def __init__(
+        self,
+        master: tk.Misc,
+        *,
+        text: str = "",
+        command: Callable[[], None] | None = None,
+        bg: str = "#1d1d1f",
+        fg: str = "#ffffff",
+        bd: int = 0,
+        padx: int = 12,
+        pady: int = 5,
+        font: tuple | str = ("Helvetica", 9),
+        state: str = "normal",
+        cursor: str | None = None,
+    ) -> None:
+        self._command = command
+        self._state = "disabled" if state == "disabled" else "normal"
+        eff_cursor = cursor if cursor is not None else ("arrow" if self._state == "disabled" else "hand2")
+        super().__init__(
+            master,
+            text=text,
+            bg=bg,
+            fg=fg,
+            bd=bd,
+            padx=padx,
+            pady=pady,
+            font=font,
+            cursor=eff_cursor,
+            takefocus=1 if self._state == "normal" else 0,
+            highlightthickness=0,
+        )
+        self.bind("<ButtonRelease-1>", self._on_release)
+        self.bind("<Return>", self._on_key)
+        self.bind("<space>", self._on_key)
+
+    def _on_release(self, event: tk.Event) -> None:
+        if self._state == "disabled":
+            return
+        if 0 <= event.x <= self.winfo_width() and 0 <= event.y <= self.winfo_height():
+            self.invoke()
+
+    def _on_key(self, _event: tk.Event) -> None:
+        if self._state != "disabled":
+            self.invoke()
+
+    def invoke(self) -> None:
+        if self._state != "disabled" and self._command is not None:
+            self._command()
+
+    def configure(self, cnf: dict | str | None = None, **kw):  # type: ignore[override]
+        if isinstance(cnf, str):
+            if cnf == "state":
+                return ("state", "state", "State", "normal", self._state)
+            return super().configure(cnf)
+        opts = dict(cnf) if isinstance(cnf, dict) else {}
+        opts.update(kw)
+        if "command" in opts:
+            self._command = opts.pop("command")
+        if "state" in opts:
+            st = opts.pop("state")
+            self._state = "disabled" if st == "disabled" else "normal"
+            opts.setdefault("cursor", "arrow" if self._state == "disabled" else "hand2")
+            opts["takefocus"] = 1 if self._state == "normal" else 0
+        return super().configure(opts) if opts else super().configure()
+
+    config = configure
+
+    def cget(self, key: str):  # type: ignore[override]
+        if key == "state":
+            return self._state
+        return super().cget(key)
+
+
+def make_dialog_button(
+    master: tk.Misc,
+    *,
+    text: str,
+    command: Callable[[], None] | None = None,
+    bg: str,
+    fg: str,
+    padx: int,
+    pady: int,
+    font: tuple | str,
+    state: str = "normal",
+    cursor: str | None = None,
+    use_flat: bool | None = None,
+) -> tk.Widget:
+    """Create a modal button: flat Label-backed on macOS (avoids Aqua white-on-white), native `tk.Button` elsewhere."""
+    flat = IS_MACOS if use_flat is None else use_flat
+    eff_cursor = cursor if cursor is not None else ("arrow" if state == "disabled" else "hand2")
+    if flat:
+        return FlatDialogButton(
+            master,
+            text=text,
+            command=command,
+            bg=bg,
+            fg=fg,
+            bd=0,
+            padx=padx,
+            pady=pady,
+            font=font,
+            state=state,
+            cursor=eff_cursor,
+        )
+    kwargs: dict[str, object] = {
+        "text": text,
+        "bg": bg,
+        "fg": fg,
+        "bd": 0,
+        "padx": padx,
+        "pady": pady,
+        "font": font,
+        "state": state,
+        "cursor": eff_cursor,
+    }
+    if command is not None:
+        kwargs["command"] = command
+    return tk.Button(master, **kwargs)
 
 
 def make_rounded_card_image(

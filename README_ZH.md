@@ -2,13 +2,13 @@
 
 [English](README.md) | [简体中文](README_ZH.md)
 
-面向 **Antigravity 2.0** 的桌面监控（Windows / macOS），查看有效工时、双滚动额度和 KV 缓存状态。
+面向 **Antigravity 2.0** 的桌面监控（Windows / macOS），追踪工时、双滚动额度与 KV 缓存。
 
-高频使用时，很难直观判断 7 天和 5 小时额度还剩多少，也难看出旧对话缓存有没有失效。GravityPulse 只读本地数据库与日志，不填 API Key，不上传数据。
+高频使用时，很难看出 7 天与 5 小时额度余量，也难判断旧对话缓存是否失效。GravityPulse 只读本地日志，不填 API Key，不上传数据。
 
-- **滚动额度**：对照官方 Quota 面板校准，实时估算 7 天与 5 小时余量，按模型和项目拆分消耗。
-- **换窗提示**：基于本地历史学习缓存存活时间，换新更划算时在右下角弹出无焦点静音卡片。
-- **有效工时**：按用户发消息界定会话，归并子代理与 Worktree，本地账本留存历史记录。
+- **滚动额度**：对齐官方重置倒计时与 Carbon 3.5x / Neon 1.75x 倍率，按模型与项目拆分消耗。
+- **自适应换窗**：按项目学习缓存与冷启动成本，运行中不打扰，仅在停顿或临近压缩时静音提醒。
+- **子对话与更新**：缩进展示子代理层级，本地账本留存工时，支持跨端安全更新。
 
 > **免责声明**：GravityPulse 是非官方社区开源工具，仅以只读方式解析 `~/.gemini/antigravity` 下的本地文件。若官方后续调整本地存储结构，可能需要同步适配。
 
@@ -78,6 +78,7 @@ python build.py --setup
 | `python build.py --watch` | 运行伴随守护进程，检测到 `Antigravity.exe` 启动时自动拉起常驻端 |
 | `python build.py --setup` | 生成图标、创建桌面 `GravityPulse.lnk` 快捷方式并写入当前用户自启项 |
 | `python build.py --uninstall-startup` | 移除当前用户注册表中的开机伴随自启项 |
+| `python build.py --update` | 检查 GitHub Releases 最新版本并安全更新（保留本地 `data/`，源码脏工作区防覆盖） |
 | `python build.py --test` | 运行单元测试 |
 | `python build.py --audit` | 执行单文件行数检查、语法检查与全部单元测试 |
 
@@ -97,4 +98,4 @@ Windows 输出至 `dist/GravityPulse/`，macOS 输出至 `dist/GravityPulse.app`
 
 ## 隐私与协议
 
-所有数据均在本地只读解析，运行期配置与账本仅保存在本地（Windows 位于程序目录 `data/`，macOS `.app` 位于 `~/Library/Application Support/GravityPulse/`），无任何外网请求。本项目基于 [MIT License](LICENSE) 开源。
+所有工时与额度数据均在本地只读解析，运行期配置与账本仅保存在本地（Windows 位于程序目录 `data/`，macOS `.app` 位于 `~/Library/Application Support/GravityPulse/`），不上传任何遥测数据。软件仅在检查新版本时访问 GitHub Releases（可在设置中关闭自动检查）。本项目基于 [MIT License](LICENSE) 开源。

@@ -67,7 +67,7 @@ class TestI18nAndTray(unittest.TestCase):
                 mock.patch.object(SystemTrayIcon, "stop"),
                 mock.patch.object(SystemTrayIcon, "set_tooltip") as mock_tip,
                 mock.patch.object(GravityPulseApp, "refresh"),
-                mock.patch("src.ui.modals.save_ui_language", side_effect=lambda lang: lang),
+                mock.patch("src.ui.tray_actions.save_ui_language", side_effect=lambda lang: lang),
             ):
                 ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="en")
                 payload = {
@@ -137,10 +137,10 @@ class TestI18nAndTray(unittest.TestCase):
                 mock.patch.object(SystemTrayIcon, "stop"),
                 mock.patch.object(GravityPulseApp, "refresh"),
                 mock.patch.object(GravityPulseApp, "_show_switch_toast") as mock_toast,
-                mock.patch("src.ui.modals.is_startup_installed", side_effect=[False, True]),
-                mock.patch("src.ui.modals.install_startup_registry") as mock_inst,
-                mock.patch("src.ui.modals.ensure_watcher_running") as mock_watch,
-                mock.patch("src.ui.modals.uninstall_startup_registry") as mock_uninst,
+                mock.patch("src.ui.tray_actions.is_startup_installed", side_effect=[False, True]),
+                mock.patch("src.ui.tray_actions.install_startup_registry") as mock_inst,
+                mock.patch("src.ui.tray_actions.ensure_watcher_running") as mock_watch,
+                mock.patch("src.ui.tray_actions.uninstall_startup_registry") as mock_uninst,
             ):
                 ui = GravityPulseApp(root, show_event_handle=0, start_hidden=True, language="en")
                 ui._handle_tray_action("toggle_startup")

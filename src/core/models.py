@@ -8,14 +8,14 @@ import os
 import re
 from urllib.parse import unquote, urlparse
 
-from config.settings import LOCAL_TZ
+from config.settings import DEFAULT_CARBON_MULTIPLIER, DEFAULT_NEON_MULTIPLIER, LOCAL_TZ
 
 
 @dataclass(frozen=True)
 class QuotaConfig:
     """Calibration, multiplier & desktop reminder settings."""
 
-    carbon_multiplier: float = 3.0
+    carbon_multiplier: float = DEFAULT_CARBON_MULTIPLIER
     anchor_start: str = "2026-11-14T15:04:01+08:00"
     anchor_end: str = "2026-11-15T23:00:46+08:00"
     anchor_weekly_used_pct: float = 18.0
@@ -26,6 +26,8 @@ class QuotaConfig:
     rolling_reset_start: str = ""
     carbon_multiplier_history: tuple[tuple[str, float], ...] = ()
     five_hour_reset_start: str = ""
+    neon_multiplier: float = DEFAULT_NEON_MULTIPLIER
+    auto_check_update: bool = True
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,22 @@ class ProjectWork:
 
 
 @dataclass(frozen=True)
+class ProjectContextProfile:
+    """Dynamically learned per-(workspace, model) warmup cost and 512K switch-zone bounds."""
+
+    sample_count: int = 0
+    working_ctx_tokens: int = 0
+    new_window_cost_usd: float = 0.0
+    turn_span_tokens: int = 0
+    zone_start_tokens: int = 0
+    idle_switch_tokens: int = 0
+    run_switch_tokens: int = 0
+    idle_zone_tokens: int = 0
+    turn_growth_tokens: int = 0
+    turn_steps: float = 0.0
+
+
+@dataclass(frozen=True)
 class DialogContextInfo:
     """Latest turn context token metrics for an active/recent user conversation."""
 
@@ -182,6 +200,14 @@ class DialogContextInfo:
     active_subtasks: int = 0
     self_running: bool = True
     context_limit: int = 0
+    work_phase: str = ""
+    task_done: int = 0
+    task_remaining: int = 0
+    project_profile: ProjectContextProfile | None = None
+    is_handover_turn: bool = False
+    is_subdialog: bool = False
+    parent_conversation_id: str = ""
+    parent_title: str = ""
 
     @property
     def context_tokens(self) -> int:

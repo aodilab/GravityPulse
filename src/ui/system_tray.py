@@ -223,8 +223,11 @@ class SystemTrayIcon:
                             state = self._menu_state_fn() if self._menu_state_fn else {}
                             lang = str(state.get("lang", "zh"))
                             startup_on = bool(state.get("startup_enabled", False))
+                            avail_ver = str(state.get("available_version", "") or "")
+                            upd_lbl = tr("tray_update_avail", lang, ver=avail_ver) if avail_ver else tr("tray_check_update", lang)
                             u32.AppendMenuW(hmenu, _MF_STRING, 1, tr("tray_open", lang))
                             u32.AppendMenuW(hmenu, _MF_STRING, 2, tr("tray_refresh", lang))
+                            u32.AppendMenuW(hmenu, _MF_STRING, 7, upd_lbl)
                             u32.AppendMenuW(hmenu, _MF_SEPARATOR, 0, None)
                             st_flags = _MF_STRING | (_MF_CHECKED if startup_on else 0)
                             u32.AppendMenuW(hmenu, st_flags, 4, tr("tray_startup", lang))
@@ -251,6 +254,7 @@ class SystemTrayIcon:
                                 4: "toggle_startup",
                                 5: "create_shortcut",
                                 6: "toggle_lang",
+                                7: "check_update",
                             }
                             if cmd in cmd_map:
                                 self._cmd_queue.put(cmd_map[cmd])

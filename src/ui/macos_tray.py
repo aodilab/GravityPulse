@@ -78,6 +78,10 @@ def setup_macos_app_menu(app: object) -> None:
             accelerator="Command+R",
             command=lambda: app.refresh(force_recompute=True, schedule_next=True),  # type: ignore[attr-defined]
         )
+        app_menu.add_command(
+            label=tr("tray_check_update", lang),
+            command=lambda: app._open_update_dialog(force_check=True),  # type: ignore[attr-defined]
+        )
         app_menu.add_command(label=tr("tray_lang", lang), command=app._toggle_language)  # type: ignore[attr-defined]
         app_menu.add_separator()
         app_menu.add_command(
@@ -206,6 +210,8 @@ class MacMenuBarTray:
         state = self._menu_state_fn() if self._menu_state_fn else {}
         lang = str(state.get("lang", "en"))
         startup_on = bool(state.get("startup_enabled", False))
+        avail_ver = str(state.get("available_version", "") or "")
+        upd_lbl = tr("tray_update_avail", lang, ver=avail_ver) if avail_ver else tr("tray_check_update", lang)
         menu.removeAllItems()
 
         def add_item(title: str, cmd: str, checked: bool = False) -> None:
@@ -220,6 +226,7 @@ class MacMenuBarTray:
 
         add_item(tr("tray_open", lang), "show")
         add_item(tr("tray_refresh", lang), "refresh")
+        add_item(upd_lbl, "check_update")
         menu.addItem_(NSMenuItem.separatorItem())
         add_item(tr("tray_startup", lang), "toggle_startup", checked=startup_on)
         add_item(tr("tray_shortcut", lang), "create_shortcut")

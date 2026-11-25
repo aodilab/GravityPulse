@@ -15,8 +15,6 @@ from config.settings import (
     INK_3,
     LINE_HEX,
 )
-
-
 from src.ui.i18n import (
     localize_advice_reason,
     localize_advice_text,
@@ -66,6 +64,14 @@ def format_ranked_project_model_parts(project: dict, lang: str = "zh") -> list[s
 class TableViewsMixin:
     """Draws zero-widget-churn Canvas rows for all four detail tabs."""
 
+    def _row_y_metrics(self, y0: int, row_h: int, line_gap: int) -> tuple[int, int, int]:
+        """Return visually centered (mid_y, top_y, sub_y) within a row above its bottom divider."""
+        mid_y = y0 + (row_h - 1) // 2
+        bias = self.px(2.5)
+        top_y = y0 + (row_h - bias - line_gap) // 2
+        sub_y = top_y + line_gap
+        return mid_y, top_y, sub_y
+
     def _draw_projects_canvas(
         self,
         projects: list[dict],
@@ -90,7 +96,8 @@ class TableViewsMixin:
             self.list_canvas.create_text(w // 2, self.px(90), text=tr("empty_projects", self._lang), fill=INK_3, font=(FONT_UI, 10))
             return 0
 
-        row_h = self.px(62)
+        row_h = self.px(56)
+        line_gap = self.px(19)
         bar_w = self.px(190)
         bar_h = self.px(3)
         dr = self.px(3)
@@ -100,8 +107,7 @@ class TableViewsMixin:
             y1 = y0 + row_h
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
 
-            top_y = y0 + self.px(21)
-            sub_y = y0 + self.px(43)
+            mid_y, top_y, sub_y = self._row_y_metrics(y0, row_h, line_gap)
             name_id = self.list_canvas.create_text(
                 self.px(6), top_y, anchor="w", text=p["workspace"], fill=INK, font=(FONT_UI, 10, "bold"),
             )
@@ -114,7 +120,7 @@ class TableViewsMixin:
             )
             self.list_canvas.create_text(sub_x, top_y, anchor="w", text=conv_lbl, fill=INK_3, font=(FONT_UI, 9))
 
-            by0 = y0 + self.px(41)
+            by0 = sub_y + self.px(1) - bar_h // 2
             self._draw_rounded_rect_on_canvas(self.list_canvas, self.px(6), by0, self.px(6) + bar_w, by0 + bar_h, bar_h // 2, BAR_TRACK)
             if p["bar_pct"] > 0:
                 fw = max(bar_h, int(round((min(100.0, p["bar_pct"]) / 100.0) * bar_w)))
@@ -124,21 +130,21 @@ class TableViewsMixin:
             txt_col = GREEN_TEXT if p["is_running"] else INK_3
             txt_str = tr("proj_running", self._lang) if p["is_running"] else tr("proj_idle", self._lang)
             dot_cx = x_st + dr
-            self.list_canvas.create_oval(dot_cx - dr, top_y - dr, dot_cx + dr, top_y + dr, fill=dot_col, outline="")
-            self.list_canvas.create_text(dot_cx + dr + self.px(6), top_y, anchor="w", text=txt_str, fill=txt_col, font=(FONT_UI, 9))
+            self.list_canvas.create_oval(dot_cx - dr, mid_y - dr, dot_cx + dr, mid_y + dr, fill=dot_col, outline="")
+            self.list_canvas.create_text(dot_cx + dr + self.px(6), mid_y, anchor="w", text=txt_str, fill=txt_col, font=(FONT_UI, 9))
 
             q_txt = f"{p.get('weekly_quota_pct', 0.0):.1f}%" if calibrated else "-"
-            self.list_canvas.create_text(x_quota, top_y, anchor="w", text=q_txt, fill=INK, font=(FONT_UI, 10, "bold"))
-
-            if calibrated:
-                model_parts = format_ranked_project_model_parts(p, lang=self._lang)
-                if model_parts:
-                    self.list_canvas.create_text(
-                        x_quota, sub_y, anchor="w", text="  ·  ".join(model_parts), fill=INK_3, font=(FONT_UI, 8),
-                    )
+            model_parts = format_ranked_project_model_parts(p, lang=self._lang) if calibrated else []
+            if model_parts:
+                self.list_canvas.create_text(x_quota, top_y, anchor="w", text=q_txt, fill=INK, font=(FONT_UI, 10, "bold"))
+                self.list_canvas.create_text(
+                    x_quota, sub_y, anchor="w", text="  ·  ".join(model_parts), fill=INK_3, font=(FONT_UI, 8),
+                )
+            else:
+                self.list_canvas.create_text(x_quota, mid_y, anchor="w", text=q_txt, fill=INK, font=(FONT_UI, 10, "bold"))
 
             self.list_canvas.create_text(
-                x_dur, top_y, anchor="e", text=localize_duration(p["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
+                x_dur, mid_y, anchor="e", text=localize_duration(p["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
             )
 
             if idx < len(projects) - 1:
@@ -169,6 +175,7 @@ class TableViewsMixin:
             return 0
 
         row_h = self.px(56)
+        line_gap = self.px(19)
         advice_styles = {
             "switch": ("#c9342b", "#fdecea"),
             "watch": ("#b25000", "#fff4e5"),
@@ -186,17 +193,20 @@ class TableViewsMixin:
         for idx, d in enumerate(dialogs):
             y0 = idx * row_h
             y1 = y0 + row_h
-            top_y = y0 + self.px(19)
-            sub_y = y0 + self.px(39)
+            mid_y, top_y, sub_y = self._row_y_metrics(y0, row_h, line_gap)
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
 
-            ws_txt = f"{d['workspace']} · "
-            ws_id = self.list_canvas.create_text(self.px(6), top_y, anchor="w", text=ws_txt, fill=INK_3, font=(FONT_UI, 9))
+            is_sub = bool(d.get("is_subdialog"))
+            base_x = self.px(20) if is_sub else self.px(6)
+            ws_txt = "↳ " if is_sub else f"{d['workspace']} · "
+            ws_id = self.list_canvas.create_text(base_x, top_y, anchor="w", text=ws_txt, fill=INK_3, font=(FONT_UI, 9))
             ws_bb = self.list_canvas.bbox(ws_id)
-            title_x = (ws_bb[2] if ws_bb else self.px(50)) + self.px(2)
+            title_x = (ws_bb[2] if ws_bb else base_x + self.px(44)) + self.px(2)
             max_title_x = x_hit - self.px(28)
             raw_title = d["title"]
-            title_id = self.list_canvas.create_text(title_x, top_y, anchor="w", text=raw_title, fill=INK, font=(FONT_UI, 10, "bold"))
+            title_fill = INK_2 if is_sub else INK
+            title_font = (FONT_UI, 9, "bold") if is_sub else (FONT_UI, 10, "bold")
+            title_id = self.list_canvas.create_text(title_x, top_y, anchor="w", text=raw_title, fill=title_fill, font=title_font)
             t_bb = self.list_canvas.bbox(title_id)
             if t_bb and t_bb[2] > max_title_x and len(raw_title) > 1:
                 lo, hi = 1, len(raw_title) - 1
@@ -215,7 +225,7 @@ class TableViewsMixin:
 
             m_lbl = localize_model_label(d.get("model_label", "Carbon"), self._lang)
             sub_line = tr("sub_tokens", self._lang, model=m_lbl, inp=d["input_fmt"], cache=d["cache_fmt"], out=d["output_fmt"])
-            self.list_canvas.create_text(self.px(6), sub_y, anchor="w", text=sub_line, fill=INK_3, font=(FONT_UI, 8))
+            self.list_canvas.create_text(base_x, sub_y, anchor="w", text=sub_line, fill=INK_3, font=(FONT_UI, 8))
 
             ctx_tok = int(d.get("context_tokens", 0))
             hit_pct = float(d.get("cache_hit_pct", 0.0))
@@ -241,15 +251,15 @@ class TableViewsMixin:
                 c_dot, c_fg = cache_styles.get(c_state, (INK_3, INK_2))
             ca_dot_cx = x_cache + dr
             ca_txt_x = ca_dot_cx + dr + self.px(6)
-            self.list_canvas.create_oval(ca_dot_cx - dr, top_y - dr, ca_dot_cx + dr, top_y + dr, fill=c_dot, outline="")
+            idle_txt = localize_cache_idle(d.get("cache_idle_text", ""), self._lang)
+            ca_y = top_y if idle_txt else mid_y
+            self.list_canvas.create_oval(ca_dot_cx - dr, ca_y - dr, ca_dot_cx + dr, ca_y + dr, fill=c_dot, outline="")
             self.list_canvas.create_text(
-                ca_txt_x, top_y, anchor="w",
+                ca_txt_x, ca_y, anchor="w",
                 text=localize_cache_status(d.get("cache_status_text", "-"), self._lang), fill=c_fg, font=(FONT_UI, 9),
             )
-            self.list_canvas.create_text(
-                ca_txt_x, sub_y, anchor="w",
-                text=localize_cache_idle(d.get("cache_idle_text", ""), self._lang), fill=INK_3, font=(FONT_UI, 8),
-            )
+            if idle_txt:
+                self.list_canvas.create_text(ca_txt_x, sub_y, anchor="w", text=idle_txt, fill=INK_3, font=(FONT_UI, 8))
 
             fg_adv, bg_adv = advice_styles.get(d["advice_key"], (INK_2, BG_PAGE))
             ctx_val_id = self.list_canvas.create_text(
@@ -271,15 +281,17 @@ class TableViewsMixin:
                 reason_fg = INK_3
             self.list_canvas.create_text(x_ctx, sub_y, anchor="w", text=reason_txt, fill=reason_fg, font=(FONT_UI, 8))
 
-            py0 = top_y - pill_h // 2
-            py1 = top_y + pill_h // 2
+            py0 = mid_y - pill_h // 2
+            py1 = py0 + pill_h
             self._draw_rounded_rect_on_canvas(self.list_canvas, px0, py0, px1, py1, self.px(11), bg_adv)
             self.list_canvas.create_text(
-                x_adv_center, top_y, text=localize_advice_text(d["advice_text"], self._lang), fill=fg_adv, font=(FONT_UI, 8),
+                x_adv_center, (py0 + py1) // 2, text=localize_advice_text(d["advice_text"], self._lang), fill=fg_adv, font=(FONT_UI, 8),
             )
 
             if idx < len(dialogs) - 1:
-                self.list_canvas.create_line(self.px(4), y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
+                next_is_sub = bool(dialogs[idx + 1].get("is_subdialog"))
+                line_x0 = self.px(20) if next_is_sub else self.px(4)
+                self.list_canvas.create_line(line_x0, y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
         return len(dialogs) * row_h
 
     def _draw_quota_cell(
@@ -287,6 +299,7 @@ class TableViewsMixin:
         x_quota: int,
         top_y: int,
         sub_y: int,
+        mid_y: int,
         item: dict,
         calibrated: bool,
         active: bool = True,
@@ -296,16 +309,17 @@ class TableViewsMixin:
         if not active or not calibrated:
             col = INK_3 if not active else INK
             font = (FONT_UI, 10) if not active else (FONT_UI, 10, "bold")
-            self.list_canvas.create_text(x_quota, top_y, anchor="w", text="-", fill=col, font=font)
+            self.list_canvas.create_text(x_quota, mid_y, anchor="w", text="-", fill=col, font=font)
             return
         tot_pct = float(item.get("weekly_quota_pct", 0.0))
         is_emph = (tot_pct > 0.0) or (not dim_zero)
+        parts = format_ranked_flat_model_parts(item, lang=self._lang)
+        main_y = top_y if parts else mid_y
         self.list_canvas.create_text(
-            x_quota, top_y, anchor="w", text=f"{tot_pct:.1f}%",
+            x_quota, main_y, anchor="w", text=f"{tot_pct:.1f}%",
             fill=INK if is_emph else INK_3,
             font=(FONT_UI, 10, "bold" if is_emph else "normal"),
         )
-        parts = format_ranked_flat_model_parts(item, lang=self._lang)
         if parts:
             self.list_canvas.create_text(
                 x_quota, sub_y, anchor="w", text="  ·  ".join(parts), fill=INK_3, font=(FONT_UI, 8),
@@ -329,17 +343,17 @@ class TableViewsMixin:
             return 0
 
         row_h = self.px(56)
+        line_gap = self.px(19)
         for idx, iv in enumerate(intervals):
             y0 = idx * row_h
             y1 = y0 + row_h
-            top_y = y0 + self.px(19)
-            sub_y = y0 + self.px(39)
+            mid_y, top_y, sub_y = self._row_y_metrics(y0, row_h, line_gap)
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
-            self.list_canvas.create_text(self.px(6), top_y, anchor="w", text=tr("slot_label", self._lang, idx=iv["index"]), fill=INK_3, font=(FONT_UI, 9))
-            self.list_canvas.create_text(x_time, top_y, anchor="w", text=f"{iv['start']} – {iv['end']}", fill=INK, font=(FONT_UI, 10, "bold"))
-            self._draw_quota_cell(x_quota, top_y, sub_y, iv, calibrated)
+            self.list_canvas.create_text(self.px(6), mid_y, anchor="w", text=tr("slot_label", self._lang, idx=iv["index"]), fill=INK_3, font=(FONT_UI, 9))
+            self.list_canvas.create_text(x_time, mid_y, anchor="w", text=f"{iv['start']} – {iv['end']}", fill=INK, font=(FONT_UI, 10, "bold"))
+            self._draw_quota_cell(x_quota, top_y, sub_y, mid_y, iv, calibrated)
             self.list_canvas.create_text(
-                x_dur, top_y, anchor="e", text=localize_duration(iv["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
+                x_dur, mid_y, anchor="e", text=localize_duration(iv["duration"], self._lang), fill=INK, font=(FONT_UI, 10, "bold"),
             )
             if idx < len(intervals) - 1:
                 self.list_canvas.create_line(self.px(4), y1 - 1, w - self.px(4), y1 - 1, fill=LINE_HEX)
@@ -365,11 +379,11 @@ class TableViewsMixin:
 
         self._cfg(self.list_canvas, cursor="hand2")
         row_h = self.px(48)
+        line_gap = self.px(17)
         for idx, d in enumerate(days):
             y0 = idx * row_h
             y1 = y0 + row_h
-            top_y = y0 + self.px(15)
-            sub_y = y0 + self.px(35)
+            mid_y, top_y, sub_y = self._row_y_metrics(y0, row_h, line_gap)
             self.list_canvas.create_rectangle(0, y0, w, y1, fill=BG_CARD, outline="", tags=(f"rowbg_{idx}",))
             self._row_hitboxes.append((y0, y1, d["date"]))
 
@@ -377,7 +391,7 @@ class TableViewsMixin:
             date_label = f"{d['date']}  {wd}" + (tr("today_tag_wide", self._lang) if d["is_today"] else "")
             lbl_col = INK if not d["is_future"] else INK_3
             self.list_canvas.create_text(
-                self.px(6), top_y, anchor="w", text=date_label, fill=lbl_col,
+                self.px(6), mid_y, anchor="w", text=date_label, fill=lbl_col,
                 font=(FONT_UI, 10, "bold" if d["is_today"] else "normal"),
             )
 
@@ -386,16 +400,16 @@ class TableViewsMixin:
                 if d["is_future"]
                 else tr("day_meta", self._lang, iv=d["interval_count"], conv=d["conversation_count"])
             )
-            self.list_canvas.create_text(x_cnt, top_y, anchor="w", text=meta_txt, fill=INK_3, font=(FONT_UI, 9))
+            self.list_canvas.create_text(x_cnt, mid_y, anchor="w", text=meta_txt, fill=INK_3, font=(FONT_UI, 9))
 
             self._draw_quota_cell(
-                x_quota, top_y, sub_y, d, calibrated=calibrated, active=not d["is_future"], dim_zero=True,
+                x_quota, top_y, sub_y, mid_y, d, calibrated=calibrated, active=not d["is_future"], dim_zero=True,
             )
 
             dur_txt = "-" if d["is_future"] else localize_duration(d["total_detail"], self._lang)
             dur_col = INK if d["total_seconds"] > 0 else INK_3
             self.list_canvas.create_text(
-                x_dur, top_y, anchor="e", text=dur_txt, fill=dur_col,
+                x_dur, mid_y, anchor="e", text=dur_txt, fill=dur_col,
                 font=(FONT_UI, 10, "bold" if d["total_seconds"] > 0 else "normal"),
             )
 

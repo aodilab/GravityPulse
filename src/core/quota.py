@@ -10,7 +10,8 @@ from config.settings import (
     ARGON_CACHE_PER_M,
     ARGON_INPUT_PER_M,
     ARGON_OUTPUT_PER_M,
-    LOCAL_TZ,
+    DEFAULT_CARBON_MULTIPLIER,
+    DEFAULT_NEON_MULTIPLIER,
     DEFAULT_QUOTA_CONFIG_PATH,
     FIVE_HOUR_TO_WEEKLY_RATIO,
     FIVE_HOUR_WINDOW_SEC,
@@ -20,9 +21,7 @@ from config.settings import (
     HYDROGEN_CACHE_PER_M,
     HYDROGEN_INPUT_PER_M,
     HYDROGEN_OUTPUT_PER_M,
-    NEON_CACHE_PER_M,
-    NEON_INPUT_PER_M,
-    NEON_OUTPUT_PER_M,
+    LOCAL_TZ,
     WEEKLY_CYCLE_SEC,
 )
 from src.core.models import (
@@ -48,7 +47,7 @@ def load_quota_config(config_path: Path = DEFAULT_QUOTA_CONFIG_PATH) -> QuotaCon
         if isinstance(item, (list, tuple)) and len(item) == 2
     )
     return QuotaConfig(
-        carbon_multiplier=max(0.1, float(raw.get("carbon_multiplier", 3.0))),
+        carbon_multiplier=max(0.1, float(raw.get("carbon_multiplier", DEFAULT_CARBON_MULTIPLIER))),
         anchor_start=str(raw.get("anchor_start", "2026-11-14T15:04:01+08:00")),
         anchor_end=str(raw.get("anchor_end", "2026-11-15T23:00:46+08:00")),
         anchor_weekly_used_pct=max(0.01, float(raw.get("anchor_weekly_used_pct", 18.0))),
@@ -59,6 +58,8 @@ def load_quota_config(config_path: Path = DEFAULT_QUOTA_CONFIG_PATH) -> QuotaCon
         rolling_reset_start=str(raw.get("rolling_reset_start", "")),
         carbon_multiplier_history=hist,
         five_hour_reset_start=str(raw.get("five_hour_reset_start", "")),
+        neon_multiplier=max(0.1, float(raw.get("neon_multiplier", DEFAULT_NEON_MULTIPLIER))),
+        auto_check_update=bool(raw.get("auto_check_update", True)),
     )
 
 
@@ -67,6 +68,7 @@ def save_quota_config(cfg: QuotaConfig, config_path: Path = DEFAULT_QUOTA_CONFIG
     config_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "carbon_multiplier": round(cfg.carbon_multiplier, 4),
+        "neon_multiplier": round(cfg.neon_multiplier, 4),
         "carbon_multiplier_history": [[ts, round(m, 4)] for ts, m in cfg.carbon_multiplier_history],
         "anchor_start": cfg.anchor_start,
         "anchor_end": cfg.anchor_end,
@@ -77,6 +79,7 @@ def save_quota_config(cfg: QuotaConfig, config_path: Path = DEFAULT_QUOTA_CONFIG
         "notify_switch": bool(cfg.notify_switch),
         "rolling_reset_start": cfg.rolling_reset_start,
         "five_hour_reset_start": cfg.five_hour_reset_start,
+        "auto_check_update": bool(cfg.auto_check_update),
     }
     config_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -108,30 +111,19 @@ def step_weighted_usd(
     cache_tok: int,
     out_tok: int,
     carbon_multiplier: float,
+    neon_multiplier: float = DEFAULT_NEON_MULTIPLIER,
 ) -> float:
-    """Compute official weighted USD cost for one Gemini step (`output_tokens` includes thinking)."""
+    """Compute calibrated weighted USD cost for one Gemini step (`output_tokens` includes thinking)."""
     if family == "carbon":
         return _hydrogen_base_usd(in_tok, cache_tok, out_tok) * carbon_multiplier
     if family == "neon":
-        return (
-            in_tok * NEON_INPUT_PER_M
-            + cache_tok * NEON_CACHE_PER_M
-            + out_tok * NEON_OUTPUT_PER_M
-        ) / 1_000_000.0
+        return _hydrogen_base_usd(in_tok, cache_tok, out_tok) * neon_multiplier
     if family == "hydrogen":
         return _hydrogen_base_usd(in_tok, cache_tok, out_tok)
     if family == "argon":
-        return (
-            in_tok * ARGON_INPUT_PER_M
-            + cache_tok * ARGON_CACHE_PER_M
-            + out_tok * ARGON_OUTPUT_PER_M
-        ) / 1_000_000.0
+        return (in_tok * ARGON_INPUT_PER_M + cache_tok * ARGON_CACHE_PER_M + out_tok * ARGON_OUTPUT_PER_M) / 1_000_000.0
     if family == "flash":
-        return (
-            in_tok * FLASH_INPUT_PER_M
-            + cache_tok * FLASH_CACHE_PER_M
-            + out_tok * FLASH_OUTPUT_PER_M
-        ) / 1_000_000.0
+        return (in_tok * FLASH_INPUT_PER_M + cache_tok * FLASH_CACHE_PER_M + out_tok * FLASH_OUTPUT_PER_M) / 1_000_000.0
     return 0.0
 
 
@@ -160,12 +152,13 @@ def _accumulate_usage_events(
     iv_totals: list[dict[str, float]],
     carbon_history: tuple[tuple[float, float], ...] = (),
     end_excl: bool = False,
+    neon_multiplier: float = DEFAULT_NEON_MULTIPLIER,
 ) -> None:
     for ts_sec, family, in_tok, cache_tok, out_tok, think_tok in events:
         if ts_sec < start_ts or (ts_sec >= end_ts if end_excl else ts_sec > end_ts):
             continue
         c_mult = _carbon_mult_at(ts_sec, carbon_multiplier, carbon_history) if family == "carbon" else carbon_multiplier
-        cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult)
+        cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult, neon_multiplier)
         bucket_key = family if family in ("carbon", "neon", "hydrogen") else "other"
         ws_bucket = totals.setdefault(
             workspace,
@@ -178,8 +171,8 @@ def _accumulate_usage_events(
         arr[3] = int(arr[3]) + think_tok
         arr[4] = float(arr[4]) + cost
         if interval_bounds:
-            for iv_idx, (iv_s, iv_e, end_excl) in enumerate(interval_bounds):
-                if ts_sec >= iv_s and (ts_sec < iv_e if end_excl else ts_sec <= iv_e):
+            for iv_idx, (iv_s, iv_e, iv_end_excl) in enumerate(interval_bounds):
+                if ts_sec >= iv_s and (ts_sec < iv_e if iv_end_excl else ts_sec <= iv_e):
                     iv_totals[iv_idx][bucket_key] += cost
                     break
 
@@ -194,6 +187,7 @@ def _collect_usage_totals(
     eff_ledger: Path | None = None,
     carbon_history: tuple[tuple[float, float], ...] = (),
     end_excl: bool = False,
+    neon_multiplier: float = DEFAULT_NEON_MULTIPLIER,
 ) -> tuple[dict[str, dict[str, list[int | float]]], list[dict[str, float]]]:
     conv_dir = antigravity_dir / "conversations"
     totals: dict[str, dict[str, list[int | float]]] = {}
@@ -213,7 +207,7 @@ def _collect_usage_totals(
             workspace = meta.workspace if meta else "未绑定工作区"
             _accumulate_usage_events(
                 read_db_step_usage(db_path), workspace, start_ts, end_ts,
-                carbon_multiplier, totals, interval_bounds, iv_totals, carbon_history, end_excl,
+                carbon_multiplier, totals, interval_bounds, iv_totals, carbon_history, end_excl, neon_multiplier,
             )
             _time.sleep(0)
 
@@ -224,7 +218,7 @@ def _collect_usage_totals(
             workspace = meta.workspace if meta else (arch_ws or "未绑定工作区")
             _accumulate_usage_events(
                 events, workspace, start_ts, end_ts,
-                carbon_multiplier, totals, interval_bounds, iv_totals, carbon_history, end_excl,
+                carbon_multiplier, totals, interval_bounds, iv_totals, carbon_history, end_excl, neon_multiplier,
             )
     return totals, iv_totals
 
@@ -236,6 +230,7 @@ def _collect_rolling_events(
     carbon_multiplier: float,
     eff_ledger: Path | None = None,
     carbon_history: tuple[tuple[float, float], ...] = (),
+    neon_multiplier: float = DEFAULT_NEON_MULTIPLIER,
 ) -> list[tuple[int, float]]:
     conv_dir = antigravity_dir / "conversations"
     if end_ts < scan_start_ts:
@@ -251,7 +246,7 @@ def _collect_rolling_events(
             for ts_sec, family, in_tok, cache_tok, out_tok, _think_tok in read_db_step_usage(db_path):
                 if scan_start_ts <= ts_sec <= end_ts:
                     c_mult = _carbon_mult_at(ts_sec, carbon_multiplier, carbon_history) if family == "carbon" else carbon_multiplier
-                    cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult)
+                    cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult, neon_multiplier)
                     if cost > 0.0:
                         out.append((ts_sec, cost))
             _time.sleep(0)
@@ -260,7 +255,7 @@ def _collect_rolling_events(
             for ts_sec, family, in_tok, cache_tok, out_tok, _think_tok in events:
                 if scan_start_ts <= ts_sec <= end_ts:
                     c_mult = _carbon_mult_at(ts_sec, carbon_multiplier, carbon_history) if family == "carbon" else carbon_multiplier
-                    cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult)
+                    cost = step_weighted_usd(family, in_tok, cache_tok, out_tok, c_mult, neon_multiplier)
                     if cost > 0.0:
                         out.append((ts_sec, cost))
     out.sort(key=lambda item: item[0])
@@ -274,17 +269,17 @@ def resolve_current_cycle_anchor_start(
     ledger_path: Path | None = None,
 ) -> str:
     """Return the start ISO timestamp of the current 7-day quota reset cycle containing `now`."""
-    now_bj = now.astimezone(LOCAL_TZ)
+    now_loc = now.astimezone(LOCAL_TZ)
     base_raw = cfg.rolling_reset_start or cfg.subscription_start or cfg.anchor_start
     base_dt = parse_iso_utc(base_raw)
     if antigravity_dir is not None:
         eff_ledger = resolve_ledger_path(antigravity_dir, ledger_path)
         if eff_ledger is not None:
             sync_telemetry_ledger(antigravity_dir, ledger_path=eff_ledger)
-        scan_start_ts = base_dt.timestamp() if base_dt is not None else max(0.0, now_bj.timestamp() - WEEKLY_CYCLE_SEC)
+        scan_start_ts = base_dt.timestamp() if base_dt is not None else max(0.0, now_loc.timestamp() - WEEKLY_CYCLE_SEC)
         events = _collect_rolling_events(
-            antigravity_dir, scan_start_ts, now_bj.timestamp(), cfg.carbon_multiplier,
-            eff_ledger=eff_ledger, carbon_history=_resolve_carbon_history(cfg),
+            antigravity_dir, scan_start_ts, now_loc.timestamp(), cfg.carbon_multiplier,
+            eff_ledger=eff_ledger, carbon_history=_resolve_carbon_history(cfg), neon_multiplier=cfg.neon_multiplier,
         )
         if events:
             c_start = 0
@@ -293,18 +288,18 @@ def resolve_current_cycle_anchor_start(
                 if ts >= c_end:
                     c_start = ts
                     c_end = ts + WEEKLY_CYCLE_SEC
-            if c_end > now_bj.timestamp():
+            if c_end > now_loc.timestamp():
                 return datetime.fromtimestamp(c_start, tz=timezone.utc).astimezone(LOCAL_TZ).isoformat(timespec="seconds")
-            return now_bj.isoformat(timespec="seconds")
+            return now_loc.isoformat(timespec="seconds")
 
     if base_dt is None:
-        mon, _ = local_week_bounds(now_bj.date())
+        mon, _ = local_week_bounds(now_loc.date())
         return datetime.combine(mon, time.min, tzinfo=LOCAL_TZ).isoformat(timespec="seconds")
-    base_bj = base_dt.astimezone(LOCAL_TZ)
-    if now_bj <= base_bj:
-        return base_bj.isoformat(timespec="seconds")
-    cycles_elapsed = int((now_bj - base_bj).total_seconds() // float(WEEKLY_CYCLE_SEC))
-    cycle_start = base_bj + timedelta(days=7 * cycles_elapsed)
+    base_loc = base_dt.astimezone(LOCAL_TZ)
+    if now_loc <= base_loc:
+        return base_loc.isoformat(timespec="seconds")
+    cycles_elapsed = int((now_loc - base_loc).total_seconds() // float(WEEKLY_CYCLE_SEC))
+    cycle_start = base_loc + timedelta(days=7 * cycles_elapsed)
     return cycle_start.isoformat(timespec="seconds")
 
 
@@ -340,7 +335,7 @@ def _compute_rolling_status(
         scan_start_ts = max(0.0, ref_ts - WEEKLY_CYCLE_SEC)
     events = _collect_rolling_events(
         antigravity_dir, scan_start_ts, ref_ts, cfg.carbon_multiplier,
-        eff_ledger=eff_ledger, carbon_history=_resolve_carbon_history(cfg),
+        eff_ledger=eff_ledger, carbon_history=_resolve_carbon_history(cfg), neon_multiplier=cfg.neon_multiplier,
     )
     if not events:
         return 0.0, 100.0, "待触发新周期", 0.0, 100.0, "满额待命"
@@ -404,6 +399,7 @@ def compute_quota_summary(
             anc_totals, _ = _collect_usage_totals(
                 antigravity_dir, anc_start.timestamp(), anc_end.timestamp(),
                 cfg.carbon_multiplier, meta_map, eff_ledger=eff_ledger, carbon_history=c_hist,
+                neon_multiplier=cfg.neon_multiplier,
             )
             anc_usd = sum(
                 float(b["carbon"][4]) + float(b["neon"][4]) + float(b["hydrogen"][4]) + float(b["other"][4])
@@ -426,7 +422,7 @@ def compute_quota_summary(
         period_totals, iv_totals = _collect_usage_totals(
             antigravity_dir, eff_start.timestamp(), win_end.timestamp(),
             cfg.carbon_multiplier, meta_map, interval_bounds=iv_bounds, eff_ledger=eff_ledger,
-            carbon_history=c_hist, end_excl=win_end_excl,
+            carbon_history=c_hist, end_excl=win_end_excl, neon_multiplier=cfg.neon_multiplier,
         )
     else:
         period_totals = {}

@@ -36,10 +36,14 @@ HYDROGEN_INPUT_PER_M = 1.50
 HYDROGEN_CACHE_PER_M = 0.075
 HYDROGEN_OUTPUT_PER_M = 7.50
 
-# Neon official Gemini API prices ($3.00 / $0.15 / $15.00 = 2.0x Hydrogen)
-NEON_INPUT_PER_M = 3.00
-NEON_CACHE_PER_M = 0.15
-NEON_OUTPUT_PER_M = 15.00
+# Default Antigravity shared-pool model multipliers relative to Hydrogen (1.0x)
+DEFAULT_CARBON_MULTIPLIER = 3.5
+DEFAULT_NEON_MULTIPLIER = 1.75
+
+# Neon calibrated Antigravity pool prices ($2.625 / $0.13125 / $13.125 = 1.75x Hydrogen)
+NEON_INPUT_PER_M = HYDROGEN_INPUT_PER_M * DEFAULT_NEON_MULTIPLIER
+NEON_CACHE_PER_M = HYDROGEN_CACHE_PER_M * DEFAULT_NEON_MULTIPLIER
+NEON_OUTPUT_PER_M = HYDROGEN_OUTPUT_PER_M * DEFAULT_NEON_MULTIPLIER
 
 ARGON_INPUT_PER_M = 2.00
 ARGON_CACHE_PER_M = 0.10
@@ -67,22 +71,38 @@ HYDROGEN_SWITCH_COMPACTIONS = 4
 CARBON_512K_SWITCH_COMPACTIONS = 1
 NEON_512K_SWITCH_COMPACTIONS = 1
 HYDROGEN_512K_SWITCH_COMPACTIONS = 1
-CARBON_512K_WATCH_TOKENS = 260_000
-CARBON_512K_SWITCH_TOKENS = 330_000
-NEON_512K_WATCH_TOKENS = 280_000
-NEON_512K_SWITCH_TOKENS = 350_000
-HYDROGEN_512K_WATCH_TOKENS = 320_000
-HYDROGEN_512K_SWITCH_TOKENS = 400_000
+CARBON_512K_IDLE_WATCH_TOKENS = 220_000
+CARBON_512K_WATCH_TOKENS = 220_000
+CARBON_512K_SWITCH_TOKENS = 260_000
+CARBON_512K_RUN_SWITCH_TOKENS = 400_000
+NEON_512K_IDLE_WATCH_TOKENS = 190_000
+NEON_512K_WATCH_TOKENS = 190_000
+NEON_512K_SWITCH_TOKENS = 230_000
+NEON_512K_RUN_SWITCH_TOKENS = 430_000
+HYDROGEN_512K_IDLE_WATCH_TOKENS = 160_000
+HYDROGEN_512K_WATCH_TOKENS = 160_000
+HYDROGEN_512K_SWITCH_TOKENS = 190_000
+HYDROGEN_512K_RUN_SWITCH_TOKENS = 450_000
+CARBON_512K_CRITICAL_TOKENS = 400_000
+NEON_512K_CRITICAL_TOKENS = 430_000
+HYDROGEN_512K_CRITICAL_TOKENS = 450_000
+COLD_CACHE_IDLE_GENTLE_RATIO = 1.05
+COLD_CACHE_SWITCH_RATIO = 1.30
+PROFILE_RECENT_DIALOGS = 10
+PROFILE_RECENT_TURNS = 15
+FOLLOWUP_TURN_MIN_DELTA_TOKENS = 30_000
 STRUCTURAL_REALERT_DELTA_TOKENS = 50_000
+CRITICAL_REALERT_DELTA_TOKENS = 30_000
 STRUCTURAL_MAX_ALERTS_PER_CYCLE = 2
+CRITICAL_MAX_ALERTS_PER_CYCLE = 3
 
 IMPLICIT_CACHE_FRESH_SEC = 300       # < 5 min (~82-89% hit)
 IMPLICIT_CACHE_COOLING_SEC = 900     # 5-15 min (~46-48% hit)
 IMPLICIT_CACHE_EXPIRED_SEC = 1_200   # >= 20 min (86.7% real cache miss)
 
-CARBON_CACHE_FRESH_SEC = 180         # < 3 min (96.9% hit)
-CARBON_CACHE_COOLING_SEC = 300       # 3-5 min (35.7% hit)
-CARBON_CACHE_EXPIRED_SEC = 480       # >= 8 min (>=75.0% real cache miss)
+CARBON_CACHE_FRESH_SEC = 180         # < 3 min (94-97% hit)
+CARBON_CACHE_COOLING_SEC = 240       # 3-4 min (sharp drop observed around 3.4m)
+CARBON_CACHE_EXPIRED_SEC = 360       # >= 6 min (high miss probability)
 
 NEON_CACHE_FRESH_SEC = 300           # < 5 min (post-2026-11-21 pool expansion: 95.0% hit in 3-5m)
 NEON_CACHE_COOLING_SEC = 360         # 5-6 min (warning zone before cliff)
@@ -99,10 +119,21 @@ FALLBACK_MODEL_FAMILIES: dict[int, str] = {
     1525: "hydrogen",  # Gemini 4 Hydrogen (High)
     1526: "hydrogen",  # Gemini 4 Hydrogen (Medium)
     1530: "hydrogen",  # Gemini 4 Hydrogen (Tiered High)
+    1531: "hydrogen",  # Gemini 4 Hydrogen (Tiered XHigh)
     1532: "neon",      # Gemini 4 Neon (High)
+    1533: "neon",      # Gemini 4 Neon (Medium)
     1667: "exclude",   # Orchestrator (Carbon)
     1669: "exclude",   # Gemini Flash (Orchestrator worker)
 }
+
+# Version & GitHub Releases Update Check
+APP_VERSION = "1.3.0"
+GITHUB_REPO = "aodilab/GravityPulse"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+GITHUB_LATEST_RELEASE_API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+UPDATE_STARTUP_DELAY_MS = 15_000
+UPDATE_CHECK_INTERVAL_MS = 6 * 3600_000
+UPDATE_HTTP_TIMEOUT_SEC = 10.0
 
 # Platform Singleton & Companion Watcher Identifiers
 APP_USER_MODEL_ID = "GravityPulse.Desktop.App"
@@ -135,7 +166,7 @@ FONT_UI = "PingFang SC" if IS_MACOS else ("Microsoft YaHei UI" if IS_WINDOWS els
 REFRESH_MS = 30_000    # 30s baseline fallback incremental auto-refresh
 MONITOR_MS = 15_000    # 15s lightweight background switch-alert check
 LIVE_TICK_MS = 1_000   # 1s pure-memory live stopwatch & idle-ago UI tick (visible only)
-LIVE_SYNC_MS = 3_000   # 3s lightweight file-fingerprint check for instant incremental sync
+LIVE_SYNC_MS = 2_000   # 2s lightweight file-fingerprint check for instant incremental & bg alert sync
 CACHE_LEARN_TTL_SEC = 60.0  # Reuse 30-day empirical cache thresholds for 60s
 IPC_POLL_MS = 400      # 400ms poll for tray / singleton show-window signal
 TOAST_DURATION_MS = 12_000

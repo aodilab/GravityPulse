@@ -5,24 +5,9 @@ import math
 import time
 import tkinter as tk
 
-from config.settings import (
-    BG_CARD,
-    BG_PAGE,
-    FONT_UI,
-    GREEN_BG,
-    INK,
-    INK_2,
-    INK_3,
-    LINE_HEX,
-)
+from config.settings import BG_CARD, BG_PAGE, FONT_UI, GREEN_BG, GREEN_TEXT, INK, INK_2, INK_3, IS_MACOS, LINE_HEX
 from src.ui.i18n import tr
-from src.ui.primitives import (
-    make_brand_badge_image,
-    make_chevron_icon,
-    make_pill_image,
-    make_refresh_icon,
-    make_rounded_card_image,
-)
+from src.ui.primitives import make_brand_badge_image, make_chevron_icon, make_pill_image, make_refresh_icon, make_rounded_card_image
 
 
 class LayoutMixin:
@@ -61,6 +46,18 @@ class LayoutMixin:
         else:
             self.today_btn_canvas.pack_forget()
 
+    def _set_update_btn_visible(self, visible: bool, label: str | None = None) -> None:
+        if visible:
+            txt = label or tr("upd_pill_default", getattr(self, "_lang", "zh"))
+            self._itemcfg(self.update_btn_canvas, self.update_btn_text, text=txt)
+        if visible == self._update_btn_packed:
+            return
+        self._update_btn_packed = visible
+        if visible:
+            self.update_btn_canvas.pack(side=tk.LEFT, padx=(self.px(10), 0))
+        else:
+            self.update_btn_canvas.pack_forget()
+
     def px(self, logical: float) -> int:
         return max(1, int(round(logical * self.scale)))
 
@@ -87,6 +84,17 @@ class LayoutMixin:
         self._imgs["badge"] = make_brand_badge_image(self.px(28))
         tk.Label(brand, image=self._imgs["badge"], bg=BG_PAGE, bd=0).pack(side=tk.LEFT, padx=(0, self.px(10)))
         tk.Label(brand, text="GravityPulse", bg=BG_PAGE, fg=INK, font=(FONT_UI, 11, "bold")).pack(side=tk.LEFT)
+
+        up_w, up_h = self.px(94), self.px(26)
+        self._imgs["update_pill"] = make_pill_image(up_w, up_h, fill=GREEN_BG, bg=BG_PAGE)
+        self.update_btn_canvas = tk.Canvas(
+            brand, width=up_w, height=up_h, bg=BG_PAGE, bd=0, highlightthickness=0, cursor="hand2",
+        )
+        self.update_btn_canvas.create_image(up_w // 2, up_h // 2, image=self._imgs["update_pill"])
+        self.update_btn_text = self.update_btn_canvas.create_text(
+            up_w // 2, up_h // 2, text=tr("upd_pill_default", self._lang), fill=GREEN_TEXT, font=(FONT_UI, 8, "bold"),
+        )
+        self.update_btn_canvas.bind("<Button-1>", lambda _e: self._open_update_dialog(force_check=False))
 
         actions = tk.Frame(nav_inner, bg=BG_PAGE)
         actions.pack(side=tk.RIGHT)
@@ -358,6 +366,9 @@ class LayoutMixin:
         self._itemcfg(self.calib_canvas, self.calib_text_item, text=tr("calibrate", self._lang))
         self._itemcfg(self.refresh_canvas, self.refresh_text_item, text=tr("refresh", self._lang))
         self._itemcfg(self.lang_canvas, self.lang_text_item, text=tr("lang_badge", self._lang))
+        rel = getattr(self, "_available_release", None)
+        if rel is not None and getattr(self, "_update_btn_packed", False):
+            self._itemcfg(self.update_btn_canvas, self.update_btn_text, text=tr("upd_pill", self._lang, ver=rel.version))
         self._cfg(self._loading_lbl, text=tr("loading_sync", self._lang))
         self._draw_mode_switch()
         self._last_viz_sig = None
@@ -365,6 +376,10 @@ class LayoutMixin:
         self._last_rows_sig = None
         if hasattr(self, "_tray") and self._tray is not None:
             self._tray.set_tooltip(tr("tray_tip", self._lang))
+        if IS_MACOS:
+            from src.ui.macos_tray import setup_macos_app_menu
+
+            setup_macos_app_menu(self)
 
     def _draw_mode_switch(self) -> None:
         self.mode_canvas.delete("all")

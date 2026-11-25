@@ -25,6 +25,7 @@ def main() -> int:
             "  --shortcut           Create/update Desktop shortcut\n"
             "  --install-startup    Register companion watcher auto-start (HKCU Run / LaunchAgent)\n"
             "  --uninstall-startup  Remove companion watcher auto-start entry\n"
+            "  --update             Check GitHub Releases and apply latest version safely\n"
             "  --test               Run unit test suite\n"
             "  --audit              Run line-limit check, syntax check, and unit tests"
         )
@@ -74,6 +75,22 @@ def main() -> int:
         uninstall_startup_registry()
         print("Removed startup entry.")
         return 0
+
+    if "--update" in arg_set:
+        from config.settings import APP_VERSION
+        from src.core.updater import apply_update, check_for_update
+
+        chk = check_for_update(current_version=APP_VERSION, lang="en")
+        if chk.status == "error":
+            print(chk.error or "Update check failed.")
+            return 1
+        if chk.status == "up_to_date" or chk.release is None:
+            print(f"Already up to date (v{chk.current_version}).")
+            return 0
+        print(f"New release found: v{chk.release.version} (current v{chk.current_version})")
+        res = apply_update(chk.release, status_cb=print, lang="en")
+        print(res.message)
+        return 0 if res.ok else 1
 
     if "--setup" in arg_set:
         from config.settings import IS_MACOS
